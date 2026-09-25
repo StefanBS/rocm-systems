@@ -2177,6 +2177,47 @@ TEST(ThroughputPluginTest, TimesTerminatorWithoutAfterExecuteCallback) {
   EXPECT_GT(dispatch.execution_seconds[control], 0.0);
 }
 
+TEST(ThroughputPluginTest, DetachAndRestoreSameGroupDiscardsInterruptedDispatch) {
+  Wave32PluginFixture fixture;
+  PluginSinkConfig sink_config;
+  StringSink &sink = sink_config.emplace<StringSink>();
+  auto group = std::make_shared<ExecutionPluginGroup>(std::move(sink_config));
+  auto throughput = std::make_unique<plugins::throughput::ThroughputPlugin>();
+  auto *throughput_ptr = throughput.get();
+  ASSERT_TRUE(group->add(std::move(throughput)));
+  fixture.cu->set_plugin_group(group);
+  group->onInit();
+
+  constexpr uint32_t Dispatch = 17;
+  KernelDispatchInfo info{};
+  info.dispatch_id = Dispatch;
+  group->onAmdgpuDispatchPacketProcessed(info);
+  group->onAmdgpuDispatchExecutionBegin(Dispatch);
+  auto *wave = fixture.cu->dispatch_wf(/*wg_id=*/0, /*pc=*/0x1000, /*num_sgprs=*/64,
+                                       /*num_vgprs=*/64, /*wave_size=*/32);
+  ASSERT_NE(wave, nullptr);
+  wave->set_dispatch_id(Dispatch);
+  group->onAmdgpuWavefrontDispatched(*wave);
+  ASSERT_TRUE(throughput_ptr->observes_hot_hooks_for_wavefront(wave));
+
+  ThroughputTestInstruction nop("s_nop");
+  group->onAmdgpuBeforeExecuteInstruction(0x1000, nop, *wave);
+  group->onAmdgpuAfterExecuteInstruction(0x1000, nop, *wave);
+
+  fixture.cu->set_plugin_group(nullptr);
+  EXPECT_FALSE(throughput_ptr->observes_hot_hooks_for_wavefront(wave));
+  fixture.cu->set_plugin_group(group);
+  EXPECT_NO_THROW(group->onAmdgpuWavefrontHalted(*wave));
+  group->onAmdgpuDispatchExecutionEnd(Dispatch);
+  group->onShutdown();
+
+  const auto records = parse_throughput_jsonl(sink.str());
+  ASSERT_EQ(records.size(), 1u);
+  EXPECT_EQ(records[0].record, "summary");
+  EXPECT_EQ(records[0].dispatches, 0u);
+  EXPECT_EQ(records[0].wave_instructions, 0u);
+}
+
 class AsyncEventPlugin final : public ExecutionPlugin {
 public:
   explicit AsyncEventPlugin(std::string name = "async-events") : ExecutionPlugin(std::move(name)) {}
@@ -4741,7 +4782,7 @@ protected:
     wave->set_exec(1);
     std::array<Wavefront *, 1> waves{wave};
     fixture.plugin_group_->onAmdgpuWorkgroupDispatched(1, 0, 256, 128, waves);
-    plugin_state = static_cast<RaceWavefrontState *>(wave->plugin_state(plugin_ptr->slot_index()));
+    plugin_state = plugin_ptr->wavefront_state<RaceWavefrontState>(*wave);
     decoder = Decoder::create(ROCJITSU_CODE_ARCH_RDNA4);
     ASSERT_NE(decoder, nullptr);
   }
@@ -5156,8 +5197,7 @@ TEST(RaceDetectorPluginTest, LocalMemoryUsesEffectiveIssueMask) {
   ASSERT_EQ(state->exec_mask, 0xFFFF'FFFFu);
   f.plugin_group_->onAmdgpuMemoryAccessRouted({}, *load, *wf);
 
-  auto *plugin_state =
-      static_cast<RaceWavefrontState *>(wf->plugin_state(plugin_ptr->slot_index()));
+  auto *plugin_state = plugin_ptr->wavefront_state<RaceWavefrontState>(*wf);
   ASSERT_NE(plugin_state, nullptr);
   auto &events = plugin_state->race_state->getDetector()->events();
   ASSERT_EQ(events.totalAllocated(), 1);
@@ -5199,8 +5239,7 @@ TEST(RaceDetectorPluginTest, MixedCounterClassesUseUnorderedEventOrdering) {
                               {WaitCounterType::LGKMCNT, MemoryCompletionClass::LDS}});
   f.plugin_group_->onAmdgpuMemoryAccessRouted({}, load, *wf);
 
-  auto *plugin_state =
-      static_cast<RaceWavefrontState *>(wf->plugin_state(plugin_ptr->slot_index()));
+  auto *plugin_state = plugin_ptr->wavefront_state<RaceWavefrontState>(*wf);
   ASSERT_NE(plugin_state, nullptr);
   auto &events = plugin_state->race_state->getDetector()->events();
   ASSERT_EQ(events.totalAllocated(), 1);
@@ -5383,8 +5422,7 @@ TEST(RaceDetectorPluginTest, Rdna4GenericFlatPartialWaitRetiresOldestEvent) {
     f.plugin_group_->onAmdgpuMemoryAccessRouted({}, *load, *wf);
   }
 
-  auto *plugin_state =
-      static_cast<RaceWavefrontState *>(wf->plugin_state(plugin_ptr->slot_index()));
+  auto *plugin_state = plugin_ptr->wavefront_state<RaceWavefrontState>(*wf);
   ASSERT_NE(plugin_state, nullptr);
   ASSERT_NE(plugin_state->race_state, nullptr);
   const auto &events = plugin_state->race_state->getDetector()->events();
@@ -5452,8 +5490,7 @@ TEST(RaceDetectorPluginTest, Rdna4GenericFlatStoreRequiresBothCounterWaits) {
     EXPECT_TRUE(cu->execute_instruction(store.get(), *wf).succeeded());
     f.plugin_group_->onAmdgpuMemoryAccessRouted({}, *store, *wf);
 
-    auto *plugin_state =
-        static_cast<RaceWavefrontState *>(wf->plugin_state(plugin_ptr->slot_index()));
+    auto *plugin_state = plugin_ptr->wavefront_state<RaceWavefrontState>(*wf);
     ASSERT_NE(plugin_state, nullptr);
     ASSERT_NE(plugin_state->race_state, nullptr);
     auto &events = plugin_state->race_state->getDetector()->events();

@@ -55,6 +55,7 @@ public:
   explicit ThroughputPlugin(const char *config_json = nullptr);
   ~ThroughputPlugin() override;
 
+  bool observes_hot_hooks_for_wavefront(const amdgpu::Wavefront *wf) const override;
   bool observes_sgpr_reads() const override { return false; }
   bool supports_async_instructions() const override { return true; }
   void onAmdgpuAsyncInstructionIssued(uint64_t pc, const Instruction &inst,
@@ -66,6 +67,7 @@ public:
   void onAmdgpuDispatchExecutionEnd(uint32_t dispatch_id) override;
   void onAmdgpuWavefrontDispatched(amdgpu::Wavefront &wf) override;
   void onAmdgpuWavefrontHalted(amdgpu::Wavefront &wf) override;
+  void onAmdgpuWavefrontStateInvalidated(amdgpu::Wavefront &wf) override;
   void onAmdgpuBeforeExecuteInstruction(uint64_t pc, const Instruction &inst,
                                         amdgpu::Wavefront &wf) override;
   void onAmdgpuAfterExecuteInstruction(uint64_t pc, const Instruction &inst,
@@ -81,6 +83,7 @@ private:
     KernelDispatchInfo info;
     Clock::time_point begin{};
     bool begun = false;
+    bool observation_complete = true;
     InstructionCounts counts{};
     InstructionNanoseconds execution_nanoseconds{};
     UntimedInstructions untimed_instructions{};
