@@ -27,7 +27,7 @@
 // wastes VMM (512 MiB with two slots) and fails late VA reservations on ROCm.
 #define NCCL_CE_AR_STAGING_BYTES (256ull * 1024 * 1024)
 
-// Fallback 2-shot max cap for rcclCeAr2ShotMax() when no arch table is present.
+// Fallback 2-shot max cap for rcclCeNonRegMaxTab(table, ncclFuncAllReduce) when no arch table is present.
 // Independent of NCCL_CE_AR_STAGING_BYTES (which governs buffer allocation).
 #ifndef NCCL_CE_AR_TMPBUF_DEFAULT_BYTES
 #define NCCL_CE_AR_TMPBUF_DEFAULT_BYTES (256ULL * 1024 * 1024)
@@ -104,7 +104,7 @@ struct ncclCeColl {
   // The reduced result is written straight into the user recvbuff (no scratch).
   uint8_t* ceARTmpBuf;
   struct ncclDevrWindow* ceARTmpWin;
-  size_t ceArMaxBytes;     // 2-shot staging cap, resolved at init: env RCCL_CE_AR_MAX_MSG_BYTES > arch ceArMax
+  size_t ceArMaxBytes;     // 2-shot staging cap, resolved at init: env RCCL_CE_AR_2SHOT_MAX_BYTES > arch ceArMax
   size_t ceArStagingBytes; // resolved at init: env var RCCL_CE_AR_STAGING_BYTES > NCCL_CE_AR_STAGING_BYTES
   uint32_t* signalBuffer;
   struct ncclDevrWindow* signalWin;
