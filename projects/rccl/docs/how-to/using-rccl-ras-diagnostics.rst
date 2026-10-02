@@ -1,6 +1,6 @@
 .. meta::
    :description: How to use the RCCL RAS diagnostics to compare GPU, driver, and NCCL configuration across the ranks of a job on AMD GPUs
-   :keywords: RCCL, ROCm, AMD, RAS, diagnostics, NCCL_RUN_RAS_DIAGNOSTICS, rcclras, troubleshooting
+   :keywords: RCCL, ROCm, AMD, RAS, diagnostics, NCCL_RUN_RAS_DIAGNOSTICS, rcclras, AMD SMI, ECC, XGMI, troubleshooting
 
 .. _using-rccl-ras-diagnostics:
 
@@ -11,14 +11,14 @@ Checking job configuration with RAS diagnostics
 The RAS (reliability, availability, and serviceability) subsystem of RCCL can
 compare the configuration that every rank of a communicator reports and print a
 short report. The report shows at a glance whether all ranks run with the same
-``NCCL_*`` environment and the same driver version, which is a common cause of
-hangs and performance differences in large jobs.
+``NCCL_*`` environment, driver version, and GPU configuration, which is a
+common cause of hangs and performance differences in large jobs, and whether a
+GPU reports memory errors or a down XGMI link.
 
 This feature is inherited from NCCL 2.31 (RAS diagnostics). The checks only
 collect and compare information. They do not send data between GPUs and do not
-assess the health of the network or of the GPU links. To verify the GPU
-peer-to-peer data paths on a node, use the active diagnostics
-(``NCCL_RUN_DIAGNOSTICS``) instead.
+measure the network or the GPU links. To verify the GPU peer-to-peer data paths
+on a node, use the active diagnostics (``NCCL_RUN_DIAGNOSTICS``) instead.
 
 The report can be produced in two ways:
 
@@ -30,28 +30,33 @@ The report can be produced in two ways:
 Checks on AMD GPUs
 ==================
 
-The report has one result per check and communicator. On AMD GPUs the checks
-currently behave as follows:
+The report has one result per check and communicator:
 
+* **GPU inventory:** compares the number of AMD GPUs on each node and the model
+  of the GPU used by each rank.
+* **HIP driver version:** compares the driver version that the HIP runtime
+  reports (``hipDriverGetVersion``) across the ranks.
+* **ECC:** reports the ranks whose GPU has uncorrectable or deferred ECC
+  errors. With ``NCCL_DIAGNOSTICS_ECC_THRESHOLD`` set, it also reports the
+  ranks whose GPU has at least that many correctable errors.
+* **XGMI:** compares the number of AMD Infinity Fabric (XGMI) links of the GPU
+  used by each rank and reports the ranks whose GPU has a link that is down.
+  Disabled links are not counted. A system without XGMI links prints no line.
 * **NCCL environment:** compares the names and values of all ``NCCL_*``
   environment variables across the ranks and lists the ranks of every value
-  that differs. This check is fully supported.
-* **Driver version:** compares the driver version that the HIP runtime reports
-  (``hipDriverGetVersion``) across the ranks. The line is labeled
-  ``CUDA driver version`` and the value is the HIP driver version.
-* **GPU inventory:** reports ``unavailable via NVML``. The check would compare
-  the number and model of the GPUs per node, but RCCL has no AMD data source
-  for it yet.
-* **ECC:** reports ``unavailable via NVML`` for the same reason. It would check
-  the volatile ECC error counters of the GPU used by each rank.
-* **Link state:** prints no line. The check reports NVIDIA NVLink links and
-  finds none on AMD GPUs. The state of the AMD Infinity Fabric (XGMI) links is
-  not checked.
+  that differs.
 
-``unavailable`` results are tagged ``[INFO]`` and do not indicate a problem
-with the system. Use ``amd-smi`` to check the GPU inventory, the ECC counters,
-and the XGMI link state of a node, for example ``amd-smi list``,
-``amd-smi metric --ecc``, and ``amd-smi xgmi``.
+The GPU inventory, ECC, and XGMI checks read AMD SMI (``libamd_smi.so``), the
+same source as the ``amd-smi`` tool. RCCL loads the library the first time the
+diagnostics run, whatever the value of ``RCCL_USE_AMD_SMI_LIB``. The ECC check
+uses the error totals of all memory blocks of the GPU, which ``amd-smi metric
+--ecc`` shows per block. Use ``amd-smi`` to inspect a GPU that the report
+names, for example ``amd-smi metric --ecc`` and ``amd-smi xgmi``.
+
+If AMD SMI cannot be loaded or does not answer for a GPU, the check reports
+``unavailable via AMD SMI``. Such results are tagged ``[INFO]`` and do not
+indicate a problem with the system. Set ``NCCL_DEBUG=INFO`` and
+``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that failed.
 
 Prerequisites
 =============
@@ -161,9 +166,10 @@ one process per GPU, looks like this:
 .. code:: none
 
    node01:4242 NCCL DIAG === RAS Diagnostics ===
-   node01:4242 NCCL DIAG [INFO] GPU inventory: unavailable via NVML across 8 ranks in comm 0x5fa31c27a9e0d1b4
-   node01:4242 NCCL DIAG [OK]   CUDA driver version: 71526333 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
-   node01:4242 NCCL DIAG [INFO] ECC: unavailable via NVML across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   GPU inventory: 8x AMD Instinct MI355X per node consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   ECC: no uncorrected volatile errors across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   XGMI: found 7 link(s) per device, all active across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG RAS diagnostics completed in 38.4 ms across 8 ranks
 
@@ -174,9 +180,11 @@ peers that answered, that is, the processes of the job, for example
 
 Result lines use two tags:
 
-* ``[OK]`` means that the check found no difference across the ranks.
-* ``[INFO]`` marks a difference, incomplete information, or a check whose data
-  is unavailable. Read the message text to tell them apart.
+* ``[OK]`` means that the check found no difference across the ranks and, for
+  the ECC and XGMI checks, no error and no down link.
+* ``[INFO]`` marks a difference, an ECC error or down link, incomplete
+  information, or a check whose data is unavailable. Read the message text to
+  tell them apart.
 
 A check that finds a difference prints several lines that group the ranks by
 value. For example, a job where the processes on the second node run with a
