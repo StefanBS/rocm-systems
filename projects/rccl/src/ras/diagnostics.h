@@ -91,6 +91,9 @@ struct rasDiagnosticsCheckPayloadHeader {
   int payloadBytes; // Only the records following this header.
 };
 
+// Loads the data sources of the checks. Every peer collects its local data before forwarding a diagnostics request,
+// so a source loaded on first use delays the request once per hop; a short-lived communicator can be gone by then.
+void rasDiagnosticsInit();
 ncclResult_t rasDiagnosticsContextInit(struct rasDiagnosticsContext* ctx, const struct ncclComm* comm);
 ncclResult_t rasDiagnosticsFormatLine(char* out, size_t outSize, const char* line);
 ncclResult_t rasLocalHandleRunDiag(const struct rasDiagnosticsContext* ctx);

@@ -10,6 +10,9 @@
 
 #include "diagnostics.h"
 
+// Loads the GPU data source of the checks below ahead of their first use.
+void rasDiagnosticsGpuInit();
+
 ncclResult_t rasDiagnosticsGpuModelCollectLocal(const struct rasDiagnosticsContext* ctx,
                                                 struct rasDiagnosticsLocalData* data);
 ncclResult_t rasDiagnosticsGpuModelSummarize(

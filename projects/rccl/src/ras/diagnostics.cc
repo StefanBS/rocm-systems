@@ -72,6 +72,10 @@ static const struct rasDiagnosticsCheck rasDiagnosticsChecks[RAS_DIAG_CHECK_COUN
 static ncclResult_t rasDiagnosticsSummarizePeerPayloads(
   const struct rasDiagnosticsContext* ctx, const struct rasDiagnosticsReporter* reporter, const char* data, int nData);
 
+void rasDiagnosticsInit() {
+  rasDiagnosticsGpuInit();
+}
+
 ncclResult_t rasDiagnosticsContextInit(struct rasDiagnosticsContext* ctx, const struct ncclComm* comm) {
   if (ctx == nullptr) {
     WARN("RAS diagnostics context init received null context");

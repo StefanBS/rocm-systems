@@ -47,8 +47,10 @@ The report has one result per check and communicator:
   that differs.
 
 The GPU inventory, ECC, and XGMI checks read AMD SMI (``libamd_smi.so``), the
-same source as the ``amd-smi`` tool. RCCL loads the library the first time the
-diagnostics run, whatever the value of ``RCCL_USE_AMD_SMI_LIB``. The ECC check
+same source as the ``amd-smi`` tool. With ``NCCL_RUN_RAS_DIAGNOSTICS=1``, RCCL
+loads the library when the process creates its first communicator; otherwise,
+the first time the diagnostics run. This does not depend on the value of
+``RCCL_USE_AMD_SMI_LIB``. The ECC check
 uses the error totals of all memory blocks of the GPU, which ``amd-smi metric
 --ecc`` shows per block. Use ``amd-smi`` to inspect a GPU that the report
 names, for example ``amd-smi metric --ecc`` and ``amd-smi xgmi``.
@@ -96,8 +98,8 @@ The report is printed to the standard output of the process that hosts rank 0
 of the communicator, not to ``NCCL_DEBUG_FILE``. That process prints the
 header while the communicator is being created. The results and the
 ``completed`` line follow from the RAS thread shortly after, usually after
-the initialization call has returned. A process that ends right after creating
-its communicator can exit before the report is complete.
+the initialization call has returned. If a process exits or destroys the
+communicator right after creating it, the report can be incomplete.
 
 Diagnostics are informational. A reported difference does not make
 communicator initialization fail, and the communicator remains usable.
