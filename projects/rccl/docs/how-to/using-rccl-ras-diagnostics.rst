@@ -51,8 +51,10 @@ same source as the ``amd-smi`` tool. With ``NCCL_RUN_RAS_DIAGNOSTICS=1``, RCCL
 loads the library when the process creates its first communicator; otherwise,
 the first time the diagnostics run. This does not depend on the value of
 ``RCCL_USE_AMD_SMI_LIB``. The ECC check uses the error totals of all memory
-blocks of the GPU, which ``amd-smi metric --ecc`` shows per block. Use
-``amd-smi`` to inspect a GPU that the report names, for example
+blocks of the GPU, which ``amd-smi metric --ecc`` shows per block. On a GPU
+in a compute partition mode such as CPX or DPX, a rank whose partition AMD SMI
+does not list reports the model, ECC counters, and XGMI links of the physical
+GPU. Use ``amd-smi`` to inspect a GPU that the report names, for example
 ``amd-smi metric --ecc`` and ``amd-smi xgmi``.
 
 If AMD SMI cannot be loaded or does not answer for a GPU, the GPU inventory and
@@ -61,7 +63,7 @@ ECC checks report ``unavailable via AMD SMI``. Such results are tagged
 no line when no GPU answers; a GPU that does not answer while others do counts
 as having no links and is reported as a link-count mismatch. Set
 ``NCCL_DEBUG=INFO`` and ``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that
-failed.
+failed, or the AMD SMI functions that an older library does not provide.
 
 Prerequisites
 =============
