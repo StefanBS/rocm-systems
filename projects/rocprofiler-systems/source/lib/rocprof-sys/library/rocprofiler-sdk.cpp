@@ -20,8 +20,6 @@
 #include "core/demangler.hpp"
 #include "core/gpu.hpp"
 #include "core/output_file_registry.hpp"
-#include "core/perfetto.hpp"
-#include "core/perfetto_fwd.hpp"
 #include "core/sdk/tracing-config-deps.hpp"
 #include "core/sdk/tracing-config.hpp"
 #include "core/state.hpp"
@@ -36,7 +34,6 @@
 #include "library/rocprofiler-sdk/domain_service.hpp"
 #include "library/rocprofiler-sdk/fwd.hpp"
 #include "library/rocprofiler-sdk/rccl.hpp"
-#include "library/rocprofiler-sdk/stream_stack_service.hpp"
 #include "library/thread_info.hpp"
 #include "library/tracing.hpp"
 #include "rocprofiler-sdk.hpp"
@@ -141,19 +138,6 @@ get_backtrace(std::optional<std::vector<tim::unwind::processed_entry>>& bt_data)
 
 // NOLINTBEGIN(readability-function-size)
 // Implementation of rocprofiler_callback_tracing_operation_args_cb_t
-int
-save_args(rocprofiler_callback_tracing_kind_t /*kind*/, std::int32_t /*operation*/,
-          std::uint32_t /*arg_number*/, const void* const /*arg_value_addr*/,
-          std::int32_t /*arg_indirection_count*/, const char* /*arg_type*/,
-          const char* arg_name, const char*             arg_value_str,
-          std::int32_t /*arg_dereference_count*/, void* data)
-{
-    auto* argvec = static_cast<callback_arg_array_t*>(data);
-    argvec->emplace_back(arg_name, arg_value_str);
-    return 0;
-}
-
-// Additional implementation of rocprofiler_callback_tracing_operation_args_cb_t
 // for iterating through arguments in a callback for rocpd_arg table in database
 int
 iterate_args_callback(rocprofiler_callback_tracing_kind_t /*kind*/,
@@ -184,7 +168,6 @@ using rocprofiler_sdk::tracing_config;
 using rocprofiler_sdk::wrapper;
 
 using production_backend = backends::rocprofiler_sdk::backend<rocprofiler_sdk::wrapper>;
-using production_stream_stack_service = stream_stack_service<production_backend>;
 
 struct external_dependencies
 {
@@ -280,12 +263,9 @@ struct external_dependencies
         constexpr size_t k_backtrace_stack_depth       = 16;
         constexpr size_t k_backtrace_ignore_depth      = 3;
         constexpr bool   k_backtrace_with_signal_frame = true;
-        auto const       use_perfetto =
-            (config::get_use_perfetto() && config::get_perfetto_annotations());
-        auto const use_rocpd = config::get_use_rocpd();
+        auto const       use_rocpd                     = config::get_use_rocpd();
 
-        const auto should_we_generate_backtrace =
-            (use_perfetto || use_rocpd) && are_operations_available;
+        const auto should_we_generate_backtrace = use_rocpd && are_operations_available;
 
         auto result = std::optional<std::vector<tim::unwind::processed_entry>>{};
 
@@ -811,84 +791,6 @@ tool_tracing_callback_stop(
         tracing::pop_timemory(CategoryT{}, name);
     }
 
-    if(get_use_perfetto())
-    {
-        auto args = callback_arg_array_t{};
-        if(config::get_perfetto_annotations())
-        {
-            rocprofiler_iterate_callback_tracing_kind_operation_args(record, save_args, 2,
-                                                                     &args);
-        }
-
-        std::uint64_t _beg_ts   = begin_ts;
-        std::uint64_t _end_ts   = ts;
-        auto const    stream_id = production_stream_stack_service::top();
-
-        tracing::push_perfetto_ts(
-            CategoryT{}, name.data(), _beg_ts,
-            ::perfetto::Flow::ProcessScoped(record.correlation_id.internal),
-            [&](::perfetto::EventContext ctx) {
-                if(config::get_perfetto_annotations())
-                {
-                    tracing::add_perfetto_annotation(ctx, "begin_ns", _beg_ts);
-                    tracing::add_perfetto_annotation(ctx, "stack_id",
-                                                     record.correlation_id.internal);
-                    if(stream_id.handle != 0)
-                    {
-                        tracing::add_perfetto_annotation(ctx, "stream_id",
-                                                         stream_id.handle);
-                    }
-                    for(const auto& [key, val] : args)
-                    {
-                        tracing::add_perfetto_annotation(ctx, key, val);
-                    }
-
-                    if(_bt_data && !_bt_data->empty())
-                    {
-                        const std::string _unk    = "??";
-                        size_t            _bt_cnt = 0;
-                        for(const auto& itr : *_bt_data)
-                        {
-                            auto        _linfo = itr.lineinfo.get();
-                            const auto* _func  = itr.name.empty() ? &_unk : &itr.name;
-                            const auto* _loc =
-                                (_linfo && !_linfo.location.empty())
-                                    ? &_linfo.location
-                                    : (itr.location.empty() ? &_unk : &itr.location);
-                            auto _line =
-                                (_linfo && _linfo.line > 0)
-                                    ? fmt::format("{}", _linfo.line)
-                                    : ((itr.lineno == 0) ? std::string{ "?" }
-                                                         : fmt::format("{}", itr.lineno));
-                            auto const _entry = fmt::format(
-                                "{} @ {}:{}", rocprofsys::utility::demangle(*_func),
-                                path::filename(*_loc), _line);
-                            if(_bt_cnt < 10)
-                            {
-                                // Prepend zero for better ordering in UI. Only one
-                                // zero is ever necessary since stack depth is limited
-                                // to 16.
-                                tracing::add_perfetto_annotation(
-                                    ctx, fmt::format("frame#0{}", _bt_cnt++), _entry);
-                            }
-                            else
-                            {
-                                tracing::add_perfetto_annotation(
-                                    ctx, fmt::format("frame#{}", _bt_cnt++), _entry);
-                            }
-                        }
-                    }
-                }
-            });
-        tracing::pop_perfetto_ts(
-            CategoryT{}, name.data(), _end_ts, [&](::perfetto::EventContext ctx) {
-                if(config::get_perfetto_annotations())
-                {
-                    tracing::add_perfetto_annotation(ctx, "end_ns", _end_ts);
-                }
-            });
-    }
-
     // Insert callback trace into database
     auto args = function_args_t{};
 
@@ -962,18 +864,11 @@ get_kernel_dispatch_timestamps()
  *
  * Certain OMPT callbacks have a "flags" argument that contains a bitmask of flags.
  * This function decodes the "flags" into a human readable form.
- * Works with both callback_arg_array_t (perfetto) and function_args_t (rocpd).
  */
-template <typename ArgsT>
 void
 ompt_iterate_operation_args(const rocprofiler_callback_tracing_record_t& record,
-                            ArgsT&                                       args)
+                            function_args_t&                             args)
 {
-    static_assert(std::is_same_v<ArgsT, callback_arg_array_t> ||
-                      std::is_same_v<ArgsT, function_args_t>,
-                  "ompt_iterate_operation_args: ArgsT must be callback_arg_array_t or "
-                  "function_args_t");
-
     auto const ompt_operation_type =
         static_cast<rocprofiler_ompt_operation_t>(record.operation);
     // ROCProfiler-SDK documentation recommends using 1 for the ENTER phase to avoid seg.
@@ -984,16 +879,8 @@ ompt_iterate_operation_args(const rocprofiler_callback_tracing_record_t& record,
                                : 2;
 
     // Perform standard iteration of arguments
-    if constexpr(std::is_same_v<ArgsT, callback_arg_array_t>)
-    {
-        rocprofiler_iterate_callback_tracing_kind_operation_args(record, save_args,
-                                                                 max_deref, &args);
-    }
-    else
-    {
-        rocprofiler_iterate_callback_tracing_kind_operation_args(
-            record, iterate_args_callback, max_deref, &args);
-    }
+    rocprofiler_iterate_callback_tracing_kind_operation_args(
+        record, iterate_args_callback, max_deref, &args);
 
     static const auto ompt_has_flags = std::set<rocprofiler_ompt_operation_t>{
         ROCPROFILER_OMPT_ID_parallel_begin, ROCPROFILER_OMPT_ID_parallel_end,
@@ -1007,18 +894,11 @@ ompt_iterate_operation_args(const rocprofiler_callback_tracing_record_t& record,
 
     auto const append = [&args](const std::string& flag_type, const std::string& key,
                                 const std::string& val) {
-        if constexpr(std::is_same_v<ArgsT, callback_arg_array_t>)
-        {
-            args.emplace_back(key, val);
-        }
-        else
-        {
-            args.emplace_back(
-                argument_info{ .arg_number = static_cast<std::uint32_t>(args.size()),
-                               .arg_type   = flag_type,
-                               .arg_name   = key,
-                               .arg_value  = val });
-        }
+        args.emplace_back(
+            argument_info{ .arg_number = static_cast<std::uint32_t>(args.size()),
+                           .arg_type   = flag_type,
+                           .arg_name   = key,
+                           .arg_value  = val });
     };
 
     int         flags_val = 0;
@@ -1353,12 +1233,10 @@ ompt_finalize_orphan_events()
     get_ompt_standard_cb_storage().clear();
 }
 
-// To handle events without finalization, perfetto push must occur in start
-// Allows capture of worker thread implicit tasks and sync regions
 void
 ompt_tracing_callback_start(rocprofiler_callback_tracing_record_t record,
                             rocprofiler_user_data_t* /*user_data*/,
-                            rocprofiler_timestamp_t ts)
+                            rocprofiler_timestamp_t /*ts*/)
 {
     const std::string_view _name = ompt_get_unified_name(record);
 
@@ -1366,105 +1244,19 @@ ompt_tracing_callback_start(rocprofiler_callback_tracing_record_t record,
     {
         tracing::push_timemory(category::rocm_ompt_api{}, _name);
     }
-
-    if(get_use_perfetto())
-    {
-        auto args = callback_arg_array_t{};
-        if(config::get_perfetto_annotations())
-        {
-            ompt_iterate_operation_args(record, args);
-        }
-
-        std::uint64_t _beg_ts   = ts;
-        auto          stream_id = production_stream_stack_service::top();
-
-        tracing::push_perfetto_ts(
-            category::rocm_ompt_api{}, _name.data(), _beg_ts,
-            ::perfetto::Flow::ProcessScoped(record.correlation_id.internal),
-            [&](::perfetto::EventContext ctx) {
-                if(config::get_perfetto_annotations())
-                {
-                    tracing::add_perfetto_annotation(ctx, "begin_ns", _beg_ts);
-                    tracing::add_perfetto_annotation(ctx, "stack_id",
-                                                     record.correlation_id.internal);
-                    if(stream_id.handle != 0)
-                    {
-                        tracing::add_perfetto_annotation(ctx, "stream_id",
-                                                         stream_id.handle);
-                    }
-                    for(const auto& [key, val] : args)
-                    {
-                        tracing::add_perfetto_annotation(ctx, key, val);
-                    }
-                }
-            });
-    }
 }
 
 void
 ompt_tracing_callback_stop(
     rocprofiler_callback_tracing_record_t record, rocprofiler_user_data_t* /*user_data*/,
-    rocprofiler_timestamp_t               ts,
-    std::optional<std::vector<tim::unwind::processed_entry>>& _bt_data)
+    rocprofiler_timestamp_t /*ts*/,
+    std::optional<std::vector<tim::unwind::processed_entry>>& /*_bt_data*/)
 {
     const std::string_view _name = ompt_get_unified_name(record);
 
     if(get_use_timemory())
     {
         tracing::pop_timemory(category::rocm_ompt_api{}, _name);
-    }
-
-    if(get_use_perfetto())
-    {
-        auto args = callback_arg_array_t{};
-        if(config::get_perfetto_annotations())
-        {
-            ompt_iterate_operation_args(record, args);
-        }
-
-        std::uint64_t _end_ts = ts;
-        tracing::pop_perfetto_ts(
-            category::rocm_ompt_api{}, _name.data(), _end_ts,
-            [&](::perfetto::EventContext ctx) {
-                if(config::get_perfetto_annotations())
-                {
-                    tracing::add_perfetto_annotation(ctx, "end_ns", _end_ts);
-                }
-                if(_bt_data && !_bt_data->empty())
-                {
-                    const std::string _unk    = "??";
-                    size_t            _bt_cnt = 0;
-                    for(const auto& itr : *_bt_data)
-                    {
-                        auto        _linfo = itr.lineinfo.get();
-                        const auto* _func  = itr.name.empty() ? &_unk : &itr.name;
-                        const auto* _loc =
-                            (_linfo && !_linfo.location.empty())
-                                ? &_linfo.location
-                                : (itr.location.empty() ? &_unk : &itr.location);
-                        auto _line =
-                            (_linfo && _linfo.line > 0)
-                                ? fmt::format("{}", _linfo.line)
-                                : ((itr.lineno == 0) ? std::string{ "?" }
-                                                     : fmt::format("{}", itr.lineno));
-                        auto const _entry = fmt::format(
-                            "{} @ {}:{}", rocprofsys::utility::demangle(*_func),
-                            path::filename(*_loc), _line);
-                        if(_bt_cnt < 10)
-                        {
-                            // Prepend zero for better ordering in UI. Only one zero
-                            // is ever necessary since stack depth is limited to 16.
-                            tracing::add_perfetto_annotation(
-                                ctx, fmt::format("frame#0{}", _bt_cnt++), _entry);
-                        }
-                        else
-                        {
-                            tracing::add_perfetto_annotation(
-                                ctx, fmt::format("frame#{}", _bt_cnt++), _entry);
-                        }
-                    }
-                }
-            });
     }
 }
 
@@ -1480,11 +1272,9 @@ tool_tracing_callback(rocprofiler_callback_tracing_record_t record,
         constexpr size_t backtrace_stack_depth       = 16;
         constexpr size_t backtrace_ignore_depth      = 3;
         constexpr bool   backtrace_with_signal_frame = true;
-        auto const       use_perfetto =
-            (config::get_use_perfetto() && config::get_perfetto_annotations());
-        auto const use_rocpd = config::get_use_rocpd();
+        auto const       use_rocpd                   = config::get_use_rocpd();
 
-        if((use_perfetto || use_rocpd) &&
+        if(use_rocpd &&
            g_tool_data->backtrace_operations.at(record.kind).contains(record.operation))
         {
             auto const _backtrace =
@@ -2650,9 +2440,7 @@ create_roctx_client()
 
     const auto roctx_config = roctx_client_config{
         .pause_resume_enabled   = has_marker_domain,
-        .use_perfetto           = config::get_use_perfetto(),
         .use_timemory           = config::get_use_timemory(),
-        .perfetto_annotations   = config::get_perfetto_annotations(),
         .selected_trace_regions = roctx_traced_regions,
     };
     g_roctx_client = std::make_shared<roctx_client<>>(g_session, roctx_config);
@@ -2772,26 +2560,13 @@ void
 tool_attach_fini(void* /* tool_data */)
 {
     // Stop and flush SDK contexts/buffers so that buffer callbacks
-    // write their Perfetto events before Perfetto post-processing.
+    // write their events to the trace cache before it is shut down.
     ::rocprofsys::rocprofiler_sdk::stop();
     ::rocprofsys::rocprofiler_sdk::flush();
     finalize_sdk_common();
 
     // Flush any pending region cache entries
     rocprofsys_flush_pending_region_cache_hidden();
-
-    // Write Perfetto trace output
-    if(get_use_perfetto())
-    {
-        bool                             _perfetto_output_error = false;
-        rocprofsys::output_file_registry _output_registry{};
-        ::rocprofsys::perfetto::post_process(nullptr, _perfetto_output_error,
-                                             _output_registry);
-        if(_perfetto_output_error)
-        {
-            LOG_ERROR("Perfetto output error occurred during attach finalization");
-        }
-    }
 
     rocprofsys_finalize_hidden();
 }
@@ -2811,12 +2586,6 @@ tool_attach_init([[maybe_unused]] rocprofiler_client_detach_t detach_func,
         LOG_INFO("Re-attaching to process {} (session {})", getpid(), current_count);
         rocprofsys_reset_for_reattach_hidden();
         reset_sdk_session_guards();
-
-        // Restart Perfetto for a new tracing session
-        if(get_use_perfetto())
-        {
-            ::rocprofsys::perfetto::start();
-        }
 
         trace_cache::get_buffer_storage().start(getpid());
 

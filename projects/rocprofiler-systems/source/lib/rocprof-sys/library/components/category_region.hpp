@@ -466,7 +466,7 @@ namespace tim::quirk
 struct causal : concepts::quirk_type
 {};
 
-struct perfetto : concepts::quirk_type
+struct no_timemory : concepts::quirk_type
 {};
 
 struct timemory : concepts::quirk_type
@@ -618,9 +618,6 @@ category_region<CategoryT>::start_impl(std::string_view name, std::string cache_
     constexpr bool _ct_use_timemory =
         (sizeof...(OptsT) == 0 || is_one_of<quirk::timemory, type_list<OptsT...>>::value);
 
-    constexpr bool _ct_use_perfetto =
-        (sizeof...(OptsT) == 0 || is_one_of<quirk::perfetto, type_list<OptsT...>>::value);
-
     constexpr bool _ct_use_causal =
         (sizeof...(OptsT) == 0 || is_one_of<quirk::causal, type_list<OptsT...>>::value);
 
@@ -655,14 +652,6 @@ category_region<CategoryT>::start_impl(std::string_view name, std::string cache_
         if(get_use_timemory())
         {
             tracing::push_timemory(CategoryT{}, name, std::forward<Args>(args)...);
-        }
-    }
-
-    if constexpr(_ct_use_perfetto)
-    {
-        if(get_use_perfetto())
-        {
-            tracing::push_perfetto(CategoryT{}, name.data(), std::forward<Args>(args)...);
         }
     }
 
@@ -722,9 +711,6 @@ category_region<CategoryT>::stop(std::string_view name, Args&&... args)
     constexpr bool _ct_use_timemory =
         (sizeof...(OptsT) == 0 || is_one_of<quirk::timemory, type_list<OptsT...>>::value);
 
-    constexpr bool _ct_use_perfetto =
-        (sizeof...(OptsT) == 0 || is_one_of<quirk::perfetto, type_list<OptsT...>>::value);
-
     constexpr bool _ct_use_causal =
         (sizeof...(OptsT) == 0 || is_one_of<quirk::causal, type_list<OptsT...>>::value);
 
@@ -741,15 +727,6 @@ category_region<CategoryT>::stop(std::string_view name, Args&&... args)
         if constexpr(is_one_of<CategoryT, tracing_count_categories_t>::value)
         {
             ++tracing::pop_count();
-        }
-
-        if constexpr(_ct_use_perfetto)
-        {
-            if(get_use_perfetto())
-            {
-                tracing::pop_perfetto(CategoryT{}, name.data(),
-                                      std::forward<Args>(args)...);
-            }
         }
 
         if constexpr(_ct_use_timemory)
@@ -842,16 +819,7 @@ void
 category_region<CategoryT>::audit(const gotcha_data_t& _data, audit::incoming,
                                   Args&&... _args)
 {
-    start<OptsT...>(_data.tool_id, [&](::perfetto::EventContext ctx) {
-        if(config::get_perfetto_annotations())
-        {
-            std::int64_t _n = 0;
-            (tracing::add_perfetto_annotation(
-                 ctx, rocprofsys::utility::demangle<std::remove_reference_t<Args>>(),
-                 _args, _n++),
-             ...);
-        }
-    });
+    start<OptsT...>(_data.tool_id);
 
     if constexpr(sizeof...(Args) > 0)
     {
@@ -871,14 +839,7 @@ category_region<CategoryT>::audit(const gotcha_data_t& _data, audit::outgoing,
         append_cache_args(_data.tool_id, region_cache::serialize_return_arg(_args...));
     }
 
-    stop<OptsT...>(_data.tool_id, [&](::perfetto::EventContext ctx) {
-        if(config::get_perfetto_annotations())
-        {
-            tracing::add_perfetto_annotation(
-                ctx, "return",
-                fmt::format("{}", fmt::join(std::forward_as_tuple(_args...), ", ")));
-        }
-    });
+    stop<OptsT...>(_data.tool_id);
 }
 
 template <typename CategoryT>
@@ -887,16 +848,7 @@ void
 category_region<CategoryT>::audit(std::string_view _name, audit::incoming,
                                   Args&&... _args)
 {
-    start<OptsT...>(_name.data(), [&](::perfetto::EventContext ctx) {
-        if(config::get_perfetto_annotations())
-        {
-            std::int64_t _n = 0;
-            (tracing::add_perfetto_annotation(
-                 ctx, rocprofsys::utility::demangle<std::remove_reference_t<Args>>(),
-                 _args, _n++),
-             ...);
-        }
-    });
+    start<OptsT...>(_name.data());
 
     if constexpr(sizeof...(Args) > 0)
     {
@@ -916,14 +868,7 @@ category_region<CategoryT>::audit(std::string_view _name, audit::outgoing,
         append_cache_args(_name.data(), region_cache::serialize_return_arg(_args...));
     }
 
-    stop<OptsT...>(_name.data(), [&](::perfetto::EventContext ctx) {
-        if(config::get_perfetto_annotations())
-        {
-            tracing::add_perfetto_annotation(
-                ctx, "return",
-                fmt::format("{}", fmt::join(std::forward_as_tuple(_args...), ", ")));
-        }
-    });
+    stop<OptsT...>(_name.data());
 }
 
 template <typename CategoryT>

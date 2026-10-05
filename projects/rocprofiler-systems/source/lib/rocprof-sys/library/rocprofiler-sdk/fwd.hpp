@@ -5,7 +5,9 @@
 
 #include "common/synchronized.hpp"
 #include "core/agent_manager.hpp"
-#include "core/perfetto.hpp"
+#include "core/categories.hpp"
+#include "core/common.hpp"
+#include "core/config.hpp"
 #include "core/state.hpp"
 #include "core/timemory.hpp"
 
@@ -34,7 +36,6 @@ using kernel_symbol_data_t =
     rocprofiler_callback_tracing_code_object_kernel_symbol_register_data_t;
 using kernel_symbol_map_t =
     std::unordered_map<rocprofiler_kernel_id_t, kernel_symbol_data_t>;
-using callback_arg_array_t = std::vector<std::pair<std::string, std::string>>;
 
 using rocprofsys_agent_t = agent;
 

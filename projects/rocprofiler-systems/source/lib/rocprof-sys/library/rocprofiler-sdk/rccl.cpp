@@ -7,7 +7,6 @@
 
 #include "core/categories.hpp"
 #include "core/config.hpp"
-#include "core/perfetto.hpp"
 #include "core/trace_cache/cache_manager.hpp"
 #include "core/trace_cache/cacheable.hpp"
 #include "core/trace_cache/metadata_registry.hpp"
@@ -194,30 +193,6 @@ rccl_metadata_initialize_track()
     trace_cache::get_metadata_registry().add_track({ Track::label, std::nullopt, "{}" });
 }
 
-template <typename Tp, typename... Args>
-void
-write_perfetto_counter_track(std::uint64_t _val, std::uint64_t _begin_ts,
-                             std::uint64_t _end_ts)
-{
-    using counter_track = rocprofsys::perfetto_counter_track<Tp>;
-
-    if(rocprofsys::get_use_perfetto() &&
-       rocprofsys::state::process::get() == rocprofsys::state::process::Active)
-    {
-        const size_t _idx = 0;
-
-        if(!counter_track::exists(_idx))
-        {
-            const std::string _label =
-                (_idx > 0) ? fmt::format("{} [{}]", Tp::label, _idx) : Tp::label;
-            counter_track::emplace(_idx, _label, "bytes");
-        }
-
-        TRACE_COUNTER(Tp::value, counter_track::at(_idx, 0), _begin_ts, _val);
-        TRACE_COUNTER(Tp::value, counter_track::at(_idx, 0), _end_ts, 0);
-    }
-}
-
 template <typename Track>
 void
 cache_rccl_comm_data_events(std::uint32_t rccl_device_idx, size_t bytes,
@@ -331,8 +306,8 @@ rccl_comm_data_initialize()
  * @brief Main callback handler for RCCL API tracing events
  *
  * This function is invoked by the profiling framework for each RCCL API call.
- * It determines the device ID from the communicator and records both cache
- * events and Perfetto counter tracks for send/recv operations.
+ * It determines the device ID from the communicator and records cache
+ * events for send/recv operations.
  *
  * @param operation The RCCL operation ID
  * @param payload The RCCL API-specific payload data
@@ -342,7 +317,7 @@ rccl_comm_data_initialize()
 void
 tool_tracing_callback_rccl(std::uint32_t                                       operation,
                            rocprofiler_callback_tracing_rccl_api_data_t const* payload,
-                           std::uint64_t begin_ts, std::uint64_t end_ts)
+                           std::uint64_t /*begin_ts*/, std::uint64_t end_ts)
 {
     const rccl_event_info info = rccl_get_event_info_impl(operation, *payload);
 
@@ -353,12 +328,10 @@ tool_tracing_callback_rccl(std::uint32_t                                       o
         if(info.is_send)
         {
             cache_rccl_comm_data_events<rccl_send>(device_id, info.size, end_ts);
-            write_perfetto_counter_track<rccl_send>(info.size, begin_ts, end_ts);
         }
         else
         {
             cache_rccl_comm_data_events<rccl_recv>(device_id, info.size, end_ts);
-            write_perfetto_counter_track<rccl_recv>(info.size, begin_ts, end_ts);
         }
     }
 }

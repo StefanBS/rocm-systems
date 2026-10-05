@@ -9,7 +9,6 @@
 #include "library/pmc/collectors/common/settings.hpp"
 #include "library/pmc/collectors/gpu/cache_policy.hpp"
 #include "library/pmc/collectors/gpu/collector.hpp"
-#include "library/pmc/collectors/gpu/perfetto_policy.hpp"
 #include "library/pmc/device_providers/amd_smi/provider.hpp"
 #include <cstdint>
 #include <rocprofiler-sdk/version.h>
@@ -21,7 +20,6 @@
 #if defined(ROCPROFSYS_BUILD_AINIC)
 #    include "library/pmc/collectors/nic/cache_policy.hpp"
 #    include "library/pmc/collectors/nic/collector.hpp"
-#    include "library/pmc/collectors/nic/perfetto_policy.hpp"
 #endif
 
 #if defined(ROCPROFSYS_BUILD_HIPFILE)
@@ -30,13 +28,11 @@
 #    include "library/pmc/collectors/hipfile/cache_policy.hpp"
 #    include "library/pmc/collectors/hipfile/collector.hpp"
 #    include "library/pmc/collectors/hipfile/device.hpp"
-#    include "library/pmc/collectors/hipfile/perfetto_policy.hpp"
 #    include "library/pmc/device_providers/hipfile/provider.hpp"
 #endif
 
 #include "library/pmc/collectors/cpu/cache_policy.hpp"
 #include "library/pmc/collectors/cpu/collector.hpp"
-#include "library/pmc/collectors/cpu/perfetto_policy.hpp"
 #include "library/pmc/device_providers/procfs/provider.hpp"
 
 #include "backends/amd_smi/backend.hpp"
@@ -94,7 +90,6 @@ is_initialized()
 struct gpu_production_config
 {
     using SettingsApi = collectors::settings_policy;
-    using PerfettoApi = collectors::gpu::perfetto_policy;
     using CacheApi    = collectors::gpu::cache_policy;
 };
 
@@ -102,7 +97,6 @@ struct gpu_production_config
 struct nic_production_config
 {
     using SettingsApi = collectors::settings_policy;
-    using PerfettoApi = collectors::nic::perfetto_policy;
     using CacheApi    = collectors::nic::cache_policy;
 };
 #endif
@@ -110,7 +104,6 @@ struct nic_production_config
 struct cpu_production_config
 {
     using SettingsApi = collectors::settings_policy;
-    using PerfettoApi = collectors::cpu::perfetto_policy;
     using CacheApi    = collectors::cpu::cache_policy;
 };
 
@@ -146,9 +139,6 @@ using cpu_collector_t = collectors::cpu::collector<cpu_provider_t, cpu_productio
 struct hipfile_production_config
 {
     using SettingsApi = collectors::settings_policy;
-    // hipFile counter tracks reach Perfetto from hipfile_pmc_sample records, so
-    // the legacy per-collector Perfetto policy is a no-op rather than a second producer.
-    using PerfettoApi = collectors::hipfile::perfetto_policy;
     using CacheApi    = collectors::hipfile::cache_policy;
 };
 
