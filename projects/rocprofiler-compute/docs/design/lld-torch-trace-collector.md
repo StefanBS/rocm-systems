@@ -203,7 +203,15 @@ validation. No exact wheel identity or paired ELF build-ID gate is used.
 
 ## Tests
 
+`ROCPROFCOMPUTE_TORCH_ROOT` selects real headers and libraries for optional
+native layout and behavior tests. It is a test dependency only. Those tests
+compare shim assumptions with real PyTorch types and exercise the C boundary,
+argument rendering, all scopes, balanced callbacks, and launcher propagation.
+Loader and wrapper tests verify discovery, supported minors, revision
+rejection, runtime promotion, fallback, and successful-push/pop pairing.
+
 - `tests/integration/test_profile_torch_trace.py`: verifies end-to-end
-  `--torch-trace` marker and counter CSVs on a sample workload.
+  `--torch-trace` markers, tensor arguments, scopes, launcher propagation,
+  and copied marker and counter CSVs on a sample workload.
 - `tests/unit/utils/test_utils_analysis.py`: verifies Function parse and
   `Thread_Id` interval nest.
