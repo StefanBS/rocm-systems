@@ -410,11 +410,17 @@ static void checkAllReduce(const std::vector<ncclComm_t>& comms)
     }
 }
 
-// AMD SMI reports ECC counters for AMD Instinct GPUs (gfx9); other GPUs may have none to report.
+// AMD SMI reports ECC counters for the CDNA Instinct GPUs (MI100 and later). Other GPUs, including the gfx9 Radeon
+// parts (gfx900, gfx906), may have none to report.
 static bool eccCountersExpected()
 {
     hipDeviceProp_t prop;
-    return hipGetDeviceProperties(&prop, 0) == hipSuccess && std::strncmp(prop.gcnArchName, "gfx9", 4) == 0;
+    if(hipGetDeviceProperties(&prop, 0) != hipSuccess)
+        return false;
+    for(const char* arch : {"gfx908", "gfx90a", "gfx94", "gfx950"})
+        if(std::strncmp(prop.gcnArchName, arch, std::strlen(arch)) == 0)
+            return true;
+    return false;
 }
 
 // nReports reports, each of a communicator with nRanks ranks: one header, one line per check covering all ranks,
