@@ -50,15 +50,18 @@ The GPU inventory, ECC, and XGMI checks read AMD SMI (``libamd_smi.so``), the
 same source as the ``amd-smi`` tool. With ``NCCL_RUN_RAS_DIAGNOSTICS=1``, RCCL
 loads the library when the process creates its first communicator; otherwise,
 the first time the diagnostics run. This does not depend on the value of
-``RCCL_USE_AMD_SMI_LIB``. The ECC check
-uses the error totals of all memory blocks of the GPU, which ``amd-smi metric
---ecc`` shows per block. Use ``amd-smi`` to inspect a GPU that the report
-names, for example ``amd-smi metric --ecc`` and ``amd-smi xgmi``.
+``RCCL_USE_AMD_SMI_LIB``. The ECC check uses the error totals of all memory
+blocks of the GPU, which ``amd-smi metric --ecc`` shows per block. Use
+``amd-smi`` to inspect a GPU that the report names, for example
+``amd-smi metric --ecc`` and ``amd-smi xgmi``.
 
-If AMD SMI cannot be loaded or does not answer for a GPU, the check reports
-``unavailable via AMD SMI``. Such results are tagged ``[INFO]`` and do not
-indicate a problem with the system. Set ``NCCL_DEBUG=INFO`` and
-``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that failed.
+If AMD SMI cannot be loaded or does not answer for a GPU, the GPU inventory and
+ECC checks report ``unavailable via AMD SMI``. Such results are tagged
+``[INFO]`` and do not indicate a problem with the system. The XGMI check prints
+no line when no GPU answers; a GPU that does not answer while others do counts
+as having no links and is reported as a link-count mismatch. Set
+``NCCL_DEBUG=INFO`` and ``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that
+failed.
 
 Prerequisites
 =============
@@ -209,3 +212,46 @@ variables with the configuration you intended.
 If not every rank answered, for example because a process stopped responding,
 the result reads ``diagnostics incomplete, gathered <n>/<total> ranks`` and
 names the communicator.
+
+The ``[INFO]`` results that need attention:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Result
+     - What to check
+   * - ``GPU inventory: count mismatch``
+     - The listed ranks run on nodes with a different number of AMD GPUs.
+       Compare ``amd-smi list`` on those nodes, for example after a GPU reset.
+   * - ``GPU inventory: model mismatch``
+     - The listed ranks use a different GPU model than the lowest rank of the
+       communicator, whose value is shown in parentheses.
+   * - ``HIP driver version: mismatch``
+     - The listed ranks run a different driver version. Compare the installed
+       ROCm and ``amdgpu`` driver versions on those nodes.
+   * - ``ECC: uncorrected volatile errors on rank(s)``
+     - The GPUs of the listed ranks have uncorrectable or deferred ECC errors.
+       ``worst`` is the highest count. Inspect them with ``amd-smi metric --ecc``.
+   * - ``ECC: corrected volatile errors at or above threshold``
+     - The GPUs of the listed ranks reached ``NCCL_DIAGNOSTICS_ECC_THRESHOLD``
+       correctable errors.
+   * - ``XGMI: link-count mismatch``
+     - The GPUs of the listed ranks have a different number of XGMI links than
+       the lowest rank of the communicator, whose value is shown in
+       parentheses. A GPU that AMD SMI did not answer for counts as having no
+       links, so ``(0)`` means that the lowest rank's GPU did not answer or has
+       no XGMI links.
+       Inspect the GPUs with ``amd-smi xgmi``.
+   * - ``XGMI: inactive link(s) on rank(s)``
+     - A link of the GPUs of the listed ranks is down. Inspect them with
+       ``amd-smi xgmi``.
+   * - ``NCCL environment: mismatch``
+     - The ranks run with different values of the named variable. The lines
+       that follow list the ranks of each value.
+   * - ``NCCL environment: ... comparison may be partial``
+     - The ``NCCL_*`` variables of the listed number of ranks exceed the size
+       that the check compares, so a difference in the rest can go unreported.
+   * - ``diagnostics incomplete``
+     - Not every rank answered. Check that the processes of the job are still
+       running.
