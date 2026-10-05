@@ -410,10 +410,17 @@ static void checkAllReduce(const std::vector<ncclComm_t>& comms)
     }
 }
 
+// AMD SMI reports ECC counters for AMD Instinct GPUs (gfx9); other GPUs may have none to report.
+static bool eccCountersExpected()
+{
+    hipDeviceProp_t prop;
+    return hipGetDeviceProperties(&prop, 0) == hipSuccess && std::strncmp(prop.gcnArchName, "gfx9", 4) == 0;
+}
+
 // nReports reports, each of a communicator with nRanks ranks: one header, one line per check covering all ranks,
 // one completion line, no failure line and no NVIDIA term. GPU inventory, driver version and NCCL environment are
-// [OK]. AMD SMI must have answered the ECC check; its result, like the XGMI line, may report a health finding
-// instead of [OK].
+// [OK]. AMD SMI must have answered the ECC check, except on GPUs without ECC counters; its result, like the XGMI
+// line, may report a health finding instead of [OK].
 static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1)
 {
     const std::string across = "across " + std::to_string(nRanks) + " ranks";
@@ -433,7 +440,10 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
     EXPECT_EQ(report.count(std::string(kTagOk) + kEnv + "NCCL_* env vars consistent " + across), nReports)
         << report.dump();
     EXPECT_EQ(report.count(std::string(kTagOk) + kDriver), nReports) << report.dump();
-    EXPECT_EQ(report.count("unavailable"), 0) << report.dump();
+    const int nEccUnavailable = report.count(std::string(kTagInfo) + kEcc + "unavailable via AMD SMI");
+    if(nEccUnavailable > 0)
+        EXPECT_FALSE(eccCountersExpected()) << "AMD SMI gave no ECC counters for an Instinct GPU\n" << report.dump();
+    EXPECT_EQ(report.count("unavailable"), nEccUnavailable) << report.dump();
     for(const char* term : kNvidiaTerms)
         EXPECT_EQ(report.count(term), 0) << term << "\n" << report.dump();
     EXPECT_EQ(report.count(kRasDone), nReports) << report.dump();
