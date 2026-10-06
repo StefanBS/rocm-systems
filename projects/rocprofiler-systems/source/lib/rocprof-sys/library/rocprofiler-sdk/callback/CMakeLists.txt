@@ -4,6 +4,7 @@
 add_subdirectory(hsa)
 add_subdirectory(hip)
 add_subdirectory(rccl)
+add_subdirectory(roctx)
 
 if(ROCPROFSYS_BUILD_TESTING)
     add_subdirectory(tests)
@@ -19,6 +20,7 @@ set(callback_domains_headers
     ${callback_domains_hsa_headers}
     ${callback_domains_hip_headers}
     ${callback_domains_rccl_headers}
+    ${callback_domains_roctx_headers}
 )
 
 set(callback_domains_headers ${callback_domains_headers} PARENT_SCOPE)

@@ -216,6 +216,11 @@ struct stream_id
 {
     std::uint64_t handle{};
 };
+// Minimal stand-ins so backend<Sdk>'s marker forwarding aliases type-check.
+using marker_op_t         = int;
+using marker_control_op_t = int;
+struct marker_payload_t
+{};
 // Real SDK defines rocprofiler_hip_stream_operation_t as an enum; a plain int
 // satisfies every comparison/assignment backend<mock_sdk> performs on it.
 using hip_stream_operation_t = int;
@@ -471,6 +476,9 @@ struct mock_sdk
     using hip_stream_data                      = testing::hip_stream_data;
     using hip_stream_operation_t               = testing::hip_stream_operation_t;
     using stream_id                            = testing::stream_id;
+    using marker_op_t                          = testing::marker_op_t;
+    using marker_control_op_t                  = testing::marker_control_op_t;
+    using marker_payload_t                     = testing::marker_payload_t;
 
     // compile_time_version >= 10000 selects the v1 branch in query_counter_details.
     static constexpr std::uint32_t compile_time_version = 10100u;
@@ -510,6 +518,18 @@ struct mock_sdk
     static constexpr callback_tracing_kind CALLBACK_TRACING_CODE_OBJECT          = 7;
     static constexpr callback_tracing_kind CALLBACK_TRACING_MARKER_CORE_API      = 8;
     static constexpr callback_tracing_kind CALLBACK_TRACING_RCCL_API             = 9;
+    static constexpr callback_tracing_kind CALLBACK_TRACING_MARKER_CONTROL_API   = 10;
+
+    // ── Marker (roctx) operation constants ────────────────────────────────────
+    // NOLINTBEGIN(readability-identifier-naming)
+    static constexpr marker_op_t         MARKER_CORE_API_ID_roctxMarkA             = 1;
+    static constexpr marker_op_t         MARKER_CORE_API_ID_roctxRangePushA        = 2;
+    static constexpr marker_op_t         MARKER_CORE_API_ID_roctxRangePop          = 3;
+    static constexpr marker_op_t         MARKER_CORE_API_ID_roctxRangeStartA       = 4;
+    static constexpr marker_op_t         MARKER_CORE_API_ID_roctxRangeStop         = 5;
+    static constexpr marker_control_op_t MARKER_CONTROL_API_ID_roctxProfilerPause  = 1;
+    static constexpr marker_control_op_t MARKER_CONTROL_API_ID_roctxProfilerResume = 2;
+    // NOLINTEND(readability-identifier-naming)
 
     // ── RCCL / NCCL types and constants ───────────────────────────────────────
     // Minimal stand-ins so backend<Sdk>'s unconditional RCCL forwarding aliases and

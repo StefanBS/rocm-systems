@@ -17,6 +17,7 @@
 #include "core/config.hpp"
 #include "core/containers/stable_vector.hpp"
 #include "core/control/session.hpp"
+#include "core/control/triggers/roctx.hpp"
 #include "core/demangler.hpp"
 #include "core/gpu.hpp"
 #include "core/output_file_registry.hpp"
@@ -39,7 +40,6 @@
 #include "library/thread_info.hpp"
 #include "library/tracing.hpp"
 #include "rocprofiler-sdk.hpp"
-#include "rocprofiler-sdk/roctx_client.hpp"
 
 #include <algorithm>
 #include <timemory/components/timing/wall_clock.hpp>
@@ -185,6 +185,29 @@ using rocprofiler_sdk::wrapper;
 
 using production_backend = backends::rocprofiler_sdk::backend<rocprofiler_sdk::wrapper>;
 using production_stream_stack_service = stream_stack_service<production_backend>;
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+std::shared_ptr<control::session> g_session = {};
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+std::unique_ptr<control::triggers::roctx> g_roctx_trigger = {};
+
+bool
+has_marker_domain()
+{
+    const auto domains = rocprofsys::delimit(
+        config::get_setting_value<std::string>(std::string{ env_vars::ROCM_DOMAINS })
+            .value_or(std::string{}),
+        " ,;:\t\n");
+    return std::ranges::find(domains, "marker_api") != domains.end() ||
+           std::ranges::find(domains, "roctx") != domains.end();
+}
+
+// roctx handling is needed for the marker domains and for region-filtered tracing.
+bool
+is_roctx_requested()
+{
+    return has_marker_domain() || !config::get_trace_region().empty();
+}
 
 struct external_dependencies
 {
@@ -427,6 +450,38 @@ struct external_dependencies
         kernel_dispatch_bundle_data.pop();
     }
 
+    // ─── Members required by domains::callback::roctx::k_{core,control}_api ────────
+    using rocm_marker_api_category = category::rocm_marker_api;
+    using string_id_t              = tim::hash_value_t;
+
+    // NOLINTNEXTLINE(readability-identifier-naming)
+    static constexpr std::string_view rocm_marker_api_category_name =
+        trait::name<category::rocm_marker_api>::value;
+    static constexpr std::string_view roctx_trigger_name =
+        control::triggers::roctx::k_trigger_name;
+
+    static bool get_roctx_pause_resume_enabled() { return has_marker_domain(); }
+
+    static bool is_roctx_enabled()
+    {
+        return g_session != nullptr && is_roctx_requested();
+    }
+
+    static control::session*         get_session() noexcept { return g_session.get(); }
+    static control::triggers::roctx* get_roctx_trigger() noexcept
+    {
+        return g_roctx_trigger.get();
+    }
+
+    static string_id_t intern_string(const char* text) { return tim::add_hash_id(text); }
+
+    static const char* lookup_string(string_id_t id)
+    {
+        const char* text = nullptr;
+        tim::get_hash_identifier_fast(id, text);
+        return text;
+    }
+
     using state_thread = state::thread;
 
     // Single source of truth is core/trace_cache/cacheable.hpp's ABSOLUTE constant;
@@ -474,9 +529,6 @@ std::shared_ptr<domain_service<production_backend, external_dependencies>>
     g_domain_service;
 
 using tool_agent_vec_t = std::vector<tool_agent>;
-// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-std::shared_ptr<roctx_client<>>   g_roctx_client = {};
-std::shared_ptr<control::session> g_session      = {};
 
 std::atomic<bool> tool_fini_done{ false };
 std::atomic<bool> tool_init_done{ false };
@@ -1618,7 +1670,7 @@ tool_tracing_callback(rocprofiler_callback_tracing_record_t record,
             }
 #endif
 
-            // MARKER_CORE_API is handled by roctx_client on control_ctx
+            // MARKER_CORE_API is handled by the roctx marker domains in domain_service
             case ROCPROFILER_CALLBACK_TRACING_NONE:
             case ROCPROFILER_CALLBACK_TRACING_LAST:
             case ROCPROFILER_CALLBACK_TRACING_MARKER_CONTROL_API:
@@ -2140,16 +2192,13 @@ tool_init(rocprofiler_client_finalize_t fini_func, void* user_data)
         _data->code_object_ctx, ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT, nullptr, 0,
         tool_code_object_callback, _data));
 
-    // Control context for marker-based region filtering and pause/resume (always-on)
-    ROCPROFILER_CALL(rocprofiler_create_context(&_data->control_ctx));
-
     // Insert the default stream and queue info to ensure that the default entry exists
     {
         trace_cache::get_metadata_registry().add_stream(0);
         trace_cache::get_metadata_registry().add_queue(0);
     }
 
-    // MARKER_CORE_API is handled by roctx_client on control_ctx
+    // MARKER_CORE_API is handled by the roctx marker domains in domain_service
     for(rocprofiler_callback_tracing_kind_t itr :
         std::initializer_list<rocprofiler_callback_tracing_kind_t>{
 #if(ROCPROFILER_VERSION >= 600)
@@ -2537,17 +2586,15 @@ tool_init(rocprofiler_client_finalize_t fini_func, void* user_data)
     }
 
     assert(g_session);
-    create_roctx_client();
+    create_roctx_trigger();
 
-    if(g_roctx_client)
-    {
-        g_roctx_client->configure_services(_data->get_control_context());
-    }
+    // Evaluated before the roctx context starts: it reads the trigger's initial state.
+    const bool defer_main_contexts = should_defer_main_contexts();
+    g_domain_service->start_roctx();
 
-    if(should_defer_main_contexts())
+    if(defer_main_contexts)
     {
         start_context(_data->get_code_obj_context());
-        start_context(_data->get_control_context());
     }
     else
     {
@@ -2641,36 +2688,15 @@ set_session(std::shared_ptr<control::session> sess)
 }
 
 void
-create_roctx_client()
+create_roctx_trigger()
 {
-    if(g_roctx_client || !g_session)
+    if(g_roctx_trigger || !g_session || !is_roctx_requested())
     {
         return;
     }
 
-    const auto domains = rocprofsys::delimit(
-        config::get_setting_value<std::string>(std::string{ env_vars::ROCM_DOMAINS })
-            .value_or(std::string{}),
-        " ,;:\t\n");
-    const auto has_marker_domain =
-        (std::ranges::find(domains, "marker_api") != domains.end() ||
-         std::ranges::find(domains, "roctx") != domains.end());
-    const auto roctx_traced_regions = config::get_trace_region();
-    const auto has_trace_regions    = !roctx_traced_regions.empty();
-
-    if(!has_marker_domain && !has_trace_regions)
-    {
-        return;
-    }
-
-    const auto roctx_config = roctx_client_config{
-        .pause_resume_enabled   = has_marker_domain,
-        .use_perfetto           = config::get_use_perfetto(),
-        .use_timemory           = config::get_use_timemory(),
-        .perfetto_annotations   = config::get_perfetto_annotations(),
-        .selected_trace_regions = roctx_traced_regions,
-    };
-    g_roctx_client = std::make_shared<roctx_client<>>(g_session, roctx_config);
+    g_roctx_trigger =
+        std::make_unique<control::triggers::roctx>(g_session, config::get_trace_region());
 }
 
 void
@@ -2692,7 +2718,7 @@ shutdown()
         g_tool_data->client_fini(*g_tool_data->client_id);
     }
 
-    g_roctx_client.reset();
+    g_roctx_trigger.reset();
 }
 
 void
