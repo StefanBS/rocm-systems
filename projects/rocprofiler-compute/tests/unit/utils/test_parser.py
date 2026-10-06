@@ -707,7 +707,6 @@ H2 = "nn.Module.Net.forward/torch.nn.functional.conv2d"
 H1 = "torch.relu"
 
 
-@pytest.mark.torch_ops
 def test_all_keyword():
     """'all' maps to '**' and matches every hierarchy."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -718,7 +717,6 @@ def test_all_keyword():
     assert not m("all", "")
 
 
-@pytest.mark.torch_ops
 def test_bare_pattern_requires_exact_match():
     """A pattern without wildcards matches only when equal to the full target."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -731,7 +729,6 @@ def test_bare_pattern_requires_exact_match():
     assert not m("sigmoid", H3)
 
 
-@pytest.mark.torch_ops
 def test_substring_wildcard_pattern():
     """``*`` matches any run of characters, including ``/``."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -745,7 +742,6 @@ def test_substring_wildcard_pattern():
     assert not m("sigm*", H3)
 
 
-@pytest.mark.torch_ops
 def test_hierarchy_glob():
     """Patterns with '/' match across multiple hierarchy components."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -755,7 +751,6 @@ def test_hierarchy_glob():
     assert not m("nn.Module.Net.forward/torch.relu", H3)
 
 
-@pytest.mark.torch_ops
 def test_leading_slash_is_cosmetic():
     """A leading ``/`` in the pattern is stripped before matching."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -764,7 +759,6 @@ def test_leading_slash_is_cosmetic():
     assert m("/torch.relu", H1)
 
 
-@pytest.mark.torch_ops
 def test_trailing_slash_is_cosmetic():
     """A trailing ``/`` in the pattern is stripped before matching."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -773,7 +767,6 @@ def test_trailing_slash_is_cosmetic():
     assert m("torch.relu/", H1)
 
 
-@pytest.mark.torch_ops
 def test_regex_not_supported():
     """Regex syntax has no special meaning; treated as literal glob text."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -784,7 +777,6 @@ def test_regex_not_supported():
     assert not m("2:functional", H3)
 
 
-@pytest.mark.torch_ops
 def test_empty_inputs():
     """Empty pattern or operator_name returns False."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -794,7 +786,6 @@ def test_empty_inputs():
     assert not m("", "")
 
 
-@pytest.mark.torch_ops
 def test_slash_only_markers():
     """Scope-marker-only tokens should not match any hierarchy."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -806,7 +797,6 @@ def test_slash_only_markers():
 # -- Additional coverage (xuchen #26) ----------------------------------------
 
 
-@pytest.mark.torch_ops
 def test_double_star_explicit():
     """'**' matches any hierarchy depth."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -818,7 +808,6 @@ def test_double_star_explicit():
     assert not m("**", "")
 
 
-@pytest.mark.torch_ops
 def test_single_char_wildcard():
     """``?`` matches exactly one character."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -830,7 +819,6 @@ def test_single_char_wildcard():
     assert m("*torch.nn.functional.conv?d", H2)
 
 
-@pytest.mark.torch_ops
 def test_long_hierarchy():
     """Patterns apply to deeply nested hierarchies."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -844,7 +832,6 @@ def test_long_hierarchy():
     assert m("*level0*", deep)
 
 
-@pytest.mark.torch_ops
 def test_long_component_names():
     """Patterns apply to components with long names."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -857,7 +844,6 @@ def test_long_component_names():
     assert not m("b*", hierarchy)
 
 
-@pytest.mark.torch_ops
 def test_special_characters_in_names():
     """Dots and underscores are treated literally."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -869,7 +855,6 @@ def test_special_characters_in_names():
     assert not m("nn_Module._internal/*", h)
 
 
-@pytest.mark.torch_ops
 def test_bracket_glob_pattern():
     """Character classes ``[abc]`` are supported."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -878,7 +863,6 @@ def test_bracket_glob_pattern():
     assert not m("*torch.rel[ab]", H3)
 
 
-@pytest.mark.torch_ops
 def test_single_component_hierarchy():
     """A single-component target matches an equal bare pattern."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -889,7 +873,6 @@ def test_single_component_hierarchy():
     assert not m("*/torch.relu", "torch.relu")
 
 
-@pytest.mark.torch_ops
 def test_whitespace_only_pattern():
     """Whitespace-only patterns normalize to empty and return False."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -898,7 +881,6 @@ def test_whitespace_only_pattern():
     assert not m("\t", H3)
 
 
-@pytest.mark.torch_ops
 def test_star_pattern_matches_all():
     """``*`` matches any non-empty target."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -910,7 +892,6 @@ def test_star_pattern_matches_all():
     assert not m("*", "")
 
 
-@pytest.mark.torch_ops
 def test_star_normalize_equivalence():
     """``"all"`` and ``"*"`` both match any non-empty target."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -919,7 +900,6 @@ def test_star_normalize_equivalence():
     assert m("*", H3)
 
 
-@pytest.mark.torch_ops
 def test_case_sensitivity():
     """Pattern matching is case-sensitive."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -930,7 +910,6 @@ def test_case_sensitivity():
     assert m("all", H3)
 
 
-@pytest.mark.torch_ops
 def test_all_keyword_case_sensitive():
     """The ``"all"`` alias is case-sensitive; other casings are literal."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -940,7 +919,6 @@ def test_all_keyword_case_sensitive():
     assert not m("All", H3)
 
 
-@pytest.mark.torch_ops
 def test_consecutive_slashes_in_target():
     """Consecutive slashes in the target are treated literally."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -950,7 +928,6 @@ def test_consecutive_slashes_in_target():
     assert m("*relu", h)
 
 
-@pytest.mark.torch_ops
 def test_dots_in_patterns():
     """Dots are treated literally, not as regex wildcards."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -962,7 +939,6 @@ def test_dots_in_patterns():
     assert m("*torchXrelu", h)
 
 
-@pytest.mark.torch_ops
 def test_pattern_with_spaces():
     """Spaces are treated literally."""
     from utils.parser import torch_operator_pattern_matches as m
@@ -973,7 +949,6 @@ def test_pattern_with_spaces():
     assert m("* spaced op */*", h)
 
 
-@pytest.mark.torch_ops
 def test_colons_in_operator_names():
     """Colons are treated literally."""
     from utils.parser import torch_operator_pattern_matches as m

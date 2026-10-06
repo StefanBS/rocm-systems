@@ -129,7 +129,6 @@ def test_pre_processing_membw_auto_run(membw_collected, expect_called, monkeypat
 # -- parse_operator_patterns (torch_operator) -------------------------------
 
 
-@pytest.mark.torch_ops
 def test_warn_ml_api_trace_errors_lists_all(monkeypatch):
     """Accumulated ML API errors are printed after the call tree."""
     from rocprof_compute_analyze.analysis_cli import _warn_ml_api_trace_errors
@@ -155,7 +154,6 @@ def test_warn_ml_api_trace_errors_lists_all(monkeypatch):
     assert "Uncorrelated launcher interval" in seen[2][1]
 
 
-@pytest.mark.torch_ops
 def test_parse_patterns_basic():
     """Single and multiple patterns are parsed correctly."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -167,7 +165,6 @@ def test_parse_patterns_basic():
     assert parse_operator_patterns(args, ["torch"]) == {"torch": ["relu", "conv2d"]}
 
 
-@pytest.mark.torch_ops
 def test_parse_patterns_comma_split():
     """Comma-separated patterns in a single arg are split."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -176,7 +173,6 @@ def test_parse_patterns_comma_split():
     assert parse_operator_patterns(args, ["torch"]) == {"torch": ["relu", "conv2d"]}
 
 
-@pytest.mark.torch_ops
 def test_parse_patterns_whitespace():
     """Leading/trailing whitespace is stripped."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -186,7 +182,6 @@ def test_parse_patterns_whitespace():
     assert result == {"torch": ["relu", "conv2d", "linear"]}
 
 
-@pytest.mark.torch_ops
 def test_parse_patterns_empty():
     """Flag given with no args defaults to '**'; absent flag returns None."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -197,7 +192,6 @@ def test_parse_patterns_empty():
     assert parse(Namespace(), ["torch"]) is None
 
 
-@pytest.mark.torch_ops
 def test_parse_operator_patterns_generic_attr():
     """parse_operator_patterns reads the given dest attribute."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -214,7 +208,6 @@ def test_parse_operator_patterns_generic_attr():
     }
 
 
-@pytest.mark.torch_ops
 def test_parse_patterns_star():
     """'*' is passed through as-is by the pattern parser."""
     from rocprof_compute_analyze.analysis_cli import parse_operator_patterns
@@ -226,19 +219,16 @@ def test_parse_patterns_star():
     assert parse_operator_patterns(args, ["torch"]) == {"torch": ["*", "torch.relu"]}
 
 
-@pytest.mark.torch_ops
 def test_operator_glob_relu_selects_relu_kernel_ids():
     workload = apply_torch_operator_glob("*relu*")
     assert workload.filter_kernel_ids == [1]
 
 
-@pytest.mark.torch_ops
 def test_operator_glob_addmm_path_selects_addmm_kernel_ids():
     workload = apply_torch_operator_glob("*/aten::addmm")
     assert workload.filter_kernel_ids == [0]
 
 
-@pytest.mark.torch_ops
 def test_operator_glob_linear_includes_descendant_addmm_ids():
     workload = apply_torch_operator_glob("*Linear.forward")
     assert workload.filter_kernel_ids == [0]
