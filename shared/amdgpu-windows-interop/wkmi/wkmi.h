@@ -286,7 +286,8 @@ void SetAllocationInfo(void* data,                    ///< Pointer to allocation
                        uint64_t addr,                 ///< Virtual address for user queue allocations
                        uint32_t mem_flags,            ///< Memory flags (kFineGrain, kKernarg, kQueueObject)
                        uint32_t engine_flag,          ///< Engine flag for queue allocations
-                       const DeviceInfo& device_info);///< Device information structure (const reference)
+                       const DeviceInfo& device_info, ///< Device information structure (const reference)
+                       bool aql_cwsr = false);        ///< True if this is AQL queue CWSR allocation for HSA event signaling
 
 /// @brief Get the required sizes for allocation private data
 void GetAllocPrivDataSize(int* priv_drv_data_size,      ///< [out] Size of driver private data structure

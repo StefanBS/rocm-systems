@@ -1118,6 +1118,7 @@ bool WDDMDevice::CreateHwQueue(WDDMQueue *queue) {
     GpuMemoryCreateInfo cwsr_create_info{};
     cwsr_create_info.domain = Wkmi::kSystem;
     cwsr_create_info.size = AllocateCwsrSize(&ctx_save_restore_size, &debug_memory_size);
+    cwsr_create_info.flags.aql_cwsr = IsAqlSupported() ? 1 : 0;
 
     GpuMemory *cwsr_gpu_mem = nullptr;
     ErrorCode cwsr_code = CreateGpuMemory(cwsr_create_info, &cwsr_gpu_mem);

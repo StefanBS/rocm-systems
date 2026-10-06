@@ -77,6 +77,7 @@ ErrorCode GpuMemory::Init(const GpuMemoryCreateInfo &create_info) {
   desc_.flags.is_sysmem_exporter = create_info.flags.sysmem_ipc_sig_exporter;
   desc_.flags.is_va_required = create_info.flags.alloc_va;
   desc_.flags.is_blit_kernel_object = create_info.flags.blit_kernel_object;
+  desc_.flags.is_aql_cwsr = create_info.flags.aql_cwsr;
 
   /* we can't tell the allocation is regular vmm or ipc mem at creation stage,
      they share same creation parameters, so forcing all vram allocations to
@@ -366,11 +367,11 @@ ErrorCode GpuMemory::CreatePhysicalMemory() {
     size_t block_size = std::min(size, WDDMDevice::GpuMemoryChunkSize);
 
     if (IsUserMemory() || IsSystem()) {
-      Wkmi::SetAllocationInfo(priv_data, block_size, desc_.domain, 0, desc_.mem_flags, desc_.engine_flag, device_info);
+      Wkmi::SetAllocationInfo(priv_data, block_size, desc_.domain, 0, desc_.mem_flags, desc_.engine_flag, device_info, desc_.flags.is_aql_cwsr);
       alloc_info[i].pSystemMem = static_cast<void *>(cpu_addr);
       cpu_addr += block_size;
     } else {
-      Wkmi::SetAllocationInfo(priv_data, block_size, desc_.domain, addr, desc_.mem_flags, desc_.engine_flag, device_info);
+      Wkmi::SetAllocationInfo(priv_data, block_size, desc_.domain, addr, desc_.mem_flags, desc_.engine_flag, device_info, desc_.flags.is_aql_cwsr);
     }
 
     size -= block_size;

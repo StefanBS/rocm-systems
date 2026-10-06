@@ -69,7 +69,8 @@ union GpuMemoryCreateFlags {
     uint64_t alloc_va                   : 1; // allocate va. 0 for vmem import
     uint64_t blit_kernel_object         : 1; // allocate executable blit kernel object
     uint64_t kmt_handle_importer        : 1; // import from KMT handle
-    uint64_t unused                     : 54;
+    uint64_t aql_cwsr                   : 1; // AQL queue CWSR allocation for HSA event signaling
+    uint64_t unused                     : 53;
   };
   uint64_t reserved;
 };
@@ -90,7 +91,8 @@ union GpuMemoryDescFlags {
     uint32_t is_imported_vram_ipc	:1;
     uint32_t is_imported_from_same_process : 3; // imported from same process, record shared cnt
     uint32_t is_blit_kernel_object : 1; // blit kernel object
-    uint32_t unused : 16;
+    uint32_t is_aql_cwsr : 1; // AQL queue CWSR allocation for HSA event signaling
+    uint32_t unused : 15;
   };
 
   uint32_t reserved;
