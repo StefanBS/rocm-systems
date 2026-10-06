@@ -1605,6 +1605,12 @@ typedef union rocprofiler_hsa_api_args_t
         void*                     value;
     } hsa_amd_agent_set_attribute;
 #    endif
+#    if HSA_AMD_EXT_API_TABLE_STEP_VERSION >= 0x15
+    struct
+    {
+        rocprofiler_hsa_api_no_args no_args;
+    } hsa_amd_enable_high_precision_timestamps;
+#    endif
 #endif
 } rocprofiler_hsa_api_args_t;
 
