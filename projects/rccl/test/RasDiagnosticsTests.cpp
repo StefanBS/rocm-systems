@@ -473,8 +473,8 @@ static bool amdSmiLoadable()
 // nReports reports covering nComms communicators (one per report by default) of nRanks ranks each: one header and
 // one completion line per report, one line per check and communicator covering all ranks, no failure line and no
 // NVIDIA term. Driver version and NCCL environment are [OK]; GPU inventory is [OK] if AMD SMI is readable and
-// unavailable otherwise. A readable AMD SMI must have answered the inventory and ECC checks, except on non-Instinct GPUs;
-// its result, like the XGMI line, may report a health finding instead of [OK]. Call sites wrap it in
+// unavailable otherwise. A readable AMD SMI must have answered the inventory and ECC checks, except on non-Instinct
+// GPUs; the ECC result, like the XGMI line, may report a health finding instead of [OK]. Call sites wrap it in
 // ASSERT_NO_FATAL_FAILURE.
 static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1,
                                  int nComms = 0, bool amdSmiReadable = amdSmiLoadable())
