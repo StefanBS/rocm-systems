@@ -422,7 +422,7 @@ static void checkAllReduce(const std::vector<ncclComm_t>& comms)
 }
 
 // AMD SMI reports ECC counters for the CDNA Instinct GPUs (MI100 and later). Other GPUs, including the gfx9 Radeon
-// parts (gfx900, gfx906), may have none to report.
+// parts (gfx900, gfx906), may have none to report. It queries HIP, so like usableGpus() it runs in case processes only.
 static bool eccCountersExpected()
 {
     hipDeviceProp_t prop;
@@ -460,7 +460,7 @@ static bool amdSmiLoadable()
 // nReports reports covering nComms communicators (one per report by default) of nRanks ranks each: one header and
 // one completion line per report, one line per check and communicator covering all ranks, no failure line and no
 // NVIDIA term. Driver version and NCCL environment are [OK]; GPU inventory is [OK] if AMD SMI is readable and
-// unavailable otherwise. A readable AMD SMI must have answered the ECC check, except on GPUs without ECC counters;
+// unavailable otherwise. A readable AMD SMI must have answered the inventory and ECC checks, except on non-Instinct GPUs;
 // its result, like the XGMI line, may report a health finding instead of [OK]. Call sites wrap it in
 // ASSERT_NO_FATAL_FAILURE.
 static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1,
@@ -485,9 +485,24 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
     EXPECT_LE(xgmi.size(), static_cast<size_t>(nComms)) << report.dump();
     for(const std::string& line : xgmi)
         EXPECT_NE(line.find(across), std::string::npos) << line;
-    const std::string inventory = amdSmiReadable ? std::string(kTagOk) + kGpuInventory
-                                                 : std::string(kTagInfo) + kGpuInventory + "unavailable via AMD SMI";
-    EXPECT_EQ(report.count(inventory), nComms) << report.dump();
+    // A readable AMD SMI may still leave the GPU model or the GPU count unanswered; the line then says which.
+    int nInventoryPartial = 0;
+    for(const std::string& line : report.checkLines(kGpuInventory))
+        if(line.find("GPU model unavailable") != std::string::npos
+           || line.find("GPU count unavailable") != std::string::npos)
+            ++nInventoryPartial;
+    if(amdSmiReadable)
+    {
+        EXPECT_EQ(report.count(std::string(kTagOk) + kGpuInventory) + nInventoryPartial, nComms) << report.dump();
+        if(nInventoryPartial > 0)
+            EXPECT_FALSE(eccCountersExpected()) << "AMD SMI gave no GPU model or count for an Instinct GPU\n"
+                                                << report.dump();
+    }
+    else
+    {
+        EXPECT_EQ(report.count(std::string(kTagInfo) + kGpuInventory + "unavailable via AMD SMI"), nComms)
+            << report.dump();
+    }
     EXPECT_EQ(report.count(std::string(kTagOk) + kEnv + "NCCL_* env vars consistent " + across), nComms)
         << report.dump();
     EXPECT_EQ(report.count(std::string(kTagOk) + kDriver), nComms) << report.dump();
@@ -497,7 +512,8 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
             ++nEccUnavailable;
     if(nEccUnavailable > 0 && amdSmiReadable)
         EXPECT_FALSE(eccCountersExpected()) << "AMD SMI gave no ECC counters for an Instinct GPU\n" << report.dump();
-    EXPECT_EQ(report.count("unavailable"), nEccUnavailable + (amdSmiReadable ? 0 : nComms)) << report.dump();
+    EXPECT_EQ(report.count("unavailable"), nEccUnavailable + nInventoryPartial + (amdSmiReadable ? 0 : nComms))
+        << report.dump();
     for(const char* term : kNvidiaTerms)
         EXPECT_EQ(report.count(term), 0) << term << "\n" << report.dump();
     EXPECT_EQ(report.count(kRasDone), nReports) << report.dump();
