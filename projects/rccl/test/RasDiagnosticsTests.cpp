@@ -14,8 +14,12 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 #include <rccl/rccl.h>
+#if __has_include(<amd_smi/amdsmi.h>)
+#include <amd_smi/amdsmi.h>
+#endif
 
 #include <arpa/inet.h>
+#include <dlfcn.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -423,11 +427,31 @@ static bool eccCountersExpected()
     return false;
 }
 
+// Whether the RAS diagnostics can load AMD SMI on this host. Keep in sync with amd_smi_diagLoadImpl
+// (src/misc/amdsmi_wrap.cc): no AMD SMI under WSL2, and the library is opened by its versioned SONAME.
+static bool amdSmiLoadable()
+{
+    if(access("/dev/dxg", F_OK) == 0)
+        return false;
+#ifdef AMDSMI_LIB_VERSION_MAJOR
+    const std::string lib = "libamd_smi.so." + std::to_string(AMDSMI_LIB_VERSION_MAJOR);
+#else
+    const std::string lib = "libamd_smi.so";
+#endif
+    void* handle = dlopen(lib.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    if(handle == nullptr)
+        return false;
+    dlclose(handle);
+    return true;
+}
+
 // nReports reports, each of a communicator with nRanks ranks: one header, one line per check covering all ranks,
-// one completion line, no failure line and no NVIDIA term. GPU inventory, driver version and NCCL environment are
-// [OK]. AMD SMI must have answered the ECC check, except on GPUs without ECC counters; its result, like the XGMI
-// line, may report a health finding instead of [OK].
-static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1)
+// one completion line, no failure line and no NVIDIA term. Driver version and NCCL environment are [OK]; GPU
+// inventory is [OK] if AMD SMI is readable and unavailable otherwise. A readable AMD SMI must have answered the ECC
+// check, except on GPUs without ECC counters; its result, like the XGMI line, may report a health finding instead
+// of [OK].
+static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1,
+                                 bool amdSmiReadable = amdSmiLoadable())
 {
     const std::string across = "across " + std::to_string(nRanks) + " ranks";
     EXPECT_EQ(report.count(kRasHeader), nReports) << report.dump();
@@ -442,14 +466,19 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
     EXPECT_LE(xgmi.size(), static_cast<size_t>(nReports)) << report.dump();
     for(const std::string& line : xgmi)
         EXPECT_NE(line.find(across), std::string::npos) << line;
-    EXPECT_EQ(report.count(std::string(kTagOk) + kGpuInventory), nReports) << report.dump();
+    const std::string inventory = amdSmiReadable ? std::string(kTagOk) + kGpuInventory
+                                                 : std::string(kTagInfo) + kGpuInventory + "unavailable via AMD SMI";
+    EXPECT_EQ(report.count(inventory), nReports) << report.dump();
     EXPECT_EQ(report.count(std::string(kTagOk) + kEnv + "NCCL_* env vars consistent " + across), nReports)
         << report.dump();
     EXPECT_EQ(report.count(std::string(kTagOk) + kDriver), nReports) << report.dump();
-    const int nEccUnavailable = report.count(std::string(kTagInfo) + kEcc + "unavailable via AMD SMI");
-    if(nEccUnavailable > 0)
+    int nEccUnavailable = 0;
+    for(const std::string& line : report.checkLines(kEcc))
+        if(line.find("unavailable") != std::string::npos)
+            ++nEccUnavailable;
+    if(nEccUnavailable > 0 && amdSmiReadable)
         EXPECT_FALSE(eccCountersExpected()) << "AMD SMI gave no ECC counters for an Instinct GPU\n" << report.dump();
-    EXPECT_EQ(report.count("unavailable"), nEccUnavailable) << report.dump();
+    EXPECT_EQ(report.count("unavailable"), nEccUnavailable + (amdSmiReadable ? 0 : nReports)) << report.dump();
     for(const char* term : kNvidiaTerms)
         EXPECT_EQ(report.count(term), 0) << term << "\n" << report.dump();
     EXPECT_EQ(report.count(kRasDone), nReports) << report.dump();
@@ -901,8 +930,18 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
     const RasReport report = parseRasReport(captured);
     ASSERT_EQ(report.lines.size(), 7u) << report.dump();
     EXPECT_EQ(report.lines.front(), kRasHeader);
-    expectCompleteReport(report, 8, "8 ranks");
+    expectCompleteReport(report, 8, "8 ranks", 1, true);
     EXPECT_TRUE(parseRasReport("no report here\n").lines.empty());
+
+    // A host where AMD SMI cannot be loaded: the AMD SMI checks are unavailable, the others still [OK].
+    const std::string noAmdSmi
+        = "node01:4242 NCCL DIAG === RAS Diagnostics ===\n"
+          "node01:4242 NCCL DIAG [INFO] GPU inventory: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [INFO] ECC: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG RAS diagnostics completed in 41.7 ms across 8 ranks\n";
+    expectCompleteReport(parseRasReport(noAmdSmi), 8, "8 ranks", 1, false);
 
     // A health finding is a complete report, not a failure.
     const std::string unhealthy
@@ -915,7 +954,7 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
           "node01:4242 NCCL DIAG [INFO] XGMI: inactive link(s) on rank(s) {5} across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG RAS diagnostics completed in 41.7 ms across 8 ranks\n";
-    expectCompleteReport(parseRasReport(unhealthy), 8, "8 ranks");
+    expectCompleteReport(parseRasReport(unhealthy), 8, "8 ranks", 1, true);
 
     // One line per failure or health marker, trimmed rather than verbatim product wording.
     const std::string failing
