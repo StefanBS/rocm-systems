@@ -226,7 +226,8 @@ The ``[INFO]`` results that need attention:
    * - Result
      - What to check
    * - ``GPU inventory: count mismatch``
-     - The listed ranks run on nodes with a different number of AMD GPUs.
+     - The listed ranks run on nodes with a different number of AMD GPUs, or
+       on nodes where AMD SMI could not count the GPUs, which counts as none.
        Compare ``amd-smi list`` on those nodes, for example after a GPU reset.
    * - ``GPU inventory: model mismatch``
      - The listed ranks use a different GPU model than the lowest rank of the

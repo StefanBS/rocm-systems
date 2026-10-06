@@ -435,21 +435,26 @@ static bool eccCountersExpected()
 }
 
 // Whether the RAS diagnostics can load AMD SMI on this host. Keep in sync with amd_smi_diagLoadImpl
-// (src/misc/amdsmi_wrap.cc): no AMD SMI under WSL2, and the library is opened by its versioned SONAME.
+// (src/misc/amdsmi_wrap.cc): no AMD SMI under WSL2, and the library is opened by its versioned SONAME. This target
+// may not see the amdsmi header that librccl is built with, so the unversioned name is tried as well.
 static bool amdSmiLoadable()
 {
     if(access("/dev/dxg", F_OK) == 0)
         return false;
+    std::vector<std::string> libs;
 #ifdef AMDSMI_LIB_VERSION_MAJOR
-    const std::string lib = "libamd_smi.so." + std::to_string(AMDSMI_LIB_VERSION_MAJOR);
-#else
-    const std::string lib = "libamd_smi.so";
+    libs.push_back("libamd_smi.so." + std::to_string(AMDSMI_LIB_VERSION_MAJOR));
 #endif
-    void* handle = dlopen(lib.c_str(), RTLD_LAZY | RTLD_LOCAL);
-    if(handle == nullptr)
-        return false;
-    dlclose(handle);
-    return true;
+    libs.push_back("libamd_smi.so");
+    for(const std::string& lib : libs)
+    {
+        if(void* handle = dlopen(lib.c_str(), RTLD_LAZY | RTLD_LOCAL))
+        {
+            dlclose(handle);
+            return true;
+        }
+    }
+    return false;
 }
 
 // nReports reports covering nComms communicators (one per report by default) of nRanks ranks each: one header and
