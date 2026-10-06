@@ -855,14 +855,17 @@ if(TARGET test-torch-trace-collector)
         NAME test-torch-trace-collector-before-install
         COMMAND ${_ttc_test_cmd} --gtest_filter=TorchTraceCollectorBeforeInstall.*
     )
-    get_target_property(
-        _ttc_ld_path
-        test-torch-trace-collector
-        ROCPROF_TEST_LD_LIBRARY_PATH
-    )
-    set(_ttc_test_env "LD_LIBRARY_PATH=${_ttc_ld_path}:$ENV{LD_LIBRARY_PATH}")
-    sanitizer_runtime_env(_san_env)
-    list(APPEND _ttc_test_env ${_san_env})
+    sanitizer_runtime_env(_ttc_test_env)
+    # Installed tests inherit LD_LIBRARY_PATH; callers must include torch/lib
+    # and any required ROCm lib/host-math/lib directory.
+    if(NOT TEST_FROM_INSTALL)
+        get_target_property(
+            _ttc_ld_path
+            test-torch-trace-collector
+            ROCPROF_TEST_LD_LIBRARY_PATH
+        )
+        list(APPEND _ttc_test_env "LD_LIBRARY_PATH=${_ttc_ld_path}:$ENV{LD_LIBRARY_PATH}")
+    endif()
     set_tests_properties(
         test-torch-trace-collector
         test-torch-trace-collector-before-install
