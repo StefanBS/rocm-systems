@@ -71,6 +71,11 @@ as having no links and is reported as a link-count mismatch. Set
 ``NCCL_DEBUG=INFO`` and ``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that
 failed, or the AMD SMI functions that an older library does not provide.
 
+The report also contains the results of checks that come from NCCL and are not
+described here: ``rdma_topo``, ``IOMMU mode``, ``ATS state``, ``Xid/SXid``, and
+``Paths``. A check that finds no data on the system reports ``[INFO]``, as in
+the sample report in `Reading the report`_.
+
 Prerequisites
 =============
 
@@ -190,8 +195,13 @@ one process per GPU, looks like this:
    node01:4242 NCCL DIAG [OK]   ECC: no uncorrected volatile errors across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   XGMI: 7 links per GPU, all active across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
-   node01:4242 NCCL DIAG [OK]   AMD GPU driver version: 6.16.13.30300000 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
-   node01:4242 NCCL DIAG RAS diagnostics completed in 38.4 ms across 8 ranks
+   node01:4242 NCCL DIAG [INFO] rdma_topo check: not usable on 8/8 ranks in comm 0x5fa31c27a9e0d1b4 (unavailable)
+   node01:4242 NCCL DIAG [INFO] IOMMU mode: unable to identify relevant GPU/NIC pairs on 8/8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [INFO] ATS state: unable to identify relevant NICs on 8/8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [INFO] Xid/SXid: no kernel-log source was available on host node01
+   node01:4242 NCCL DIAG [OK]   AMD GPU driver version: 6.14.14 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   Paths: self+XGMI across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG RAS diagnostics completed in 64.5 ms across 8 ranks
 
 The ``completed`` line of an initialization-time report counts the ranks of
 the communicator. The ``completed`` line of an on-demand report counts the RAS
