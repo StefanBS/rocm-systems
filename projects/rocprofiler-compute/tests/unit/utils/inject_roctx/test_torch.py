@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from utils.inject_roctx._backends.torch import format_wrap_args
+from utils.inject_roctx._backends.torch import (
+    DEEP_TENSOR_METHOD_WRAPS,
+    TENSOR_METHOD_WRAPS,
+    format_wrap_args,
+)
 
 
 class FakeDType:
@@ -35,6 +39,14 @@ def noop_torch_structural_wraps(monkeypatch, torch_backend):
         "inject_roctx_into_module_methods",
     ):
         monkeypatch.setattr(torch_backend, name, lambda *args, **kwargs: None)
+
+
+def install_tensor_method_wrappers_for_test(monkeypatch, torch_backend, torch_module):
+    for method_name in TENSOR_METHOD_WRAPS + DEEP_TENSOR_METHOD_WRAPS:
+        method = getattr(torch_module.Tensor, method_name, None)
+        if method is not None:
+            monkeypatch.setattr(torch_module.Tensor, method_name, method)
+    torch_backend.install_tensor_method_wrappers()
 
 
 def test_format_wrap_args_renders_tensors_and_skips_non_tensors():
@@ -156,7 +168,13 @@ def test_function_apply_wrappers_idempotent(monkeypatch):
     monkeypatch.setattr(torch_backend, "_push_scope", _count_push)
     monkeypatch.setattr(torch_backend, "_pop_scope", lambda: None)
 
-    class Foo(torch.autograd.Function):
+    class FunctionBase(torch.autograd.Function):
+        pass
+
+    # Restrict installation to this test's autograd family.
+    monkeypatch.setattr(torch_backend._STATE, "function", FunctionBase)
+
+    class Foo(FunctionBase):
         @staticmethod
         def forward(ctx, x):
             return x + 1
@@ -180,3 +198,57 @@ def test_function_apply_wrappers_idempotent(monkeypatch):
     y = Bar.apply(x)
     y.backward()
     assert push_counter["count"] == 1
+
+
+def test_lazy_linear_to_under_tensor_wraps(monkeypatch):
+    from tests.integration.common import require_torch
+    from utils.inject_roctx._backends import torch as torch_backend
+
+    require_torch()
+    import torch
+    from torch.nn.parameter import UninitializedParameter
+
+    if not torch_backend._resolve_torch():
+        pytest.skip("torch could not be resolved for inject_roctx backend")
+
+    pushes = []
+    monkeypatch.setattr(
+        torch_backend,
+        "_push_scope",
+        lambda name, location, backend="", args="n/a": pushes.append(name),
+    )
+    monkeypatch.setattr(torch_backend, "_pop_scope", lambda: None)
+    install_tensor_method_wrappers_for_test(monkeypatch, torch_backend, torch)
+
+    model = torch.nn.LazyLinear(10).to("cpu")
+    assert isinstance(model.weight, UninitializedParameter)
+    torch.zeros(1).to("cpu")
+    assert "torch.Tensor.to" in pushes
+
+
+def test_uninitialized_tensor_item_still_raises(monkeypatch):
+    from tests.integration.common import require_torch
+    from utils.inject_roctx._backends import torch as torch_backend
+
+    require_torch()
+    import torch
+    from torch.nn.parameter import UninitializedParameter
+
+    if not torch_backend._resolve_torch():
+        pytest.skip("torch could not be resolved for inject_roctx backend")
+
+    param = UninitializedParameter()
+    with pytest.raises(ValueError, match="uninitialized"):
+        param.item()
+    with pytest.raises(ValueError, match="uninitialized"):
+        param.contiguous()
+
+    monkeypatch.setattr(torch_backend, "_push_scope", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch_backend, "_pop_scope", lambda: None)
+    install_tensor_method_wrappers_for_test(monkeypatch, torch_backend, torch)
+
+    wrapped = UninitializedParameter()
+    with pytest.raises(ValueError, match="uninitialized"):
+        wrapped.item()
+    with pytest.raises(ValueError, match="uninitialized"):
+        wrapped.contiguous()

@@ -9,14 +9,19 @@ Full documentation for ROCm Compute Profiler is available at [https://rocm.docs.
 
 ### Changed
 
+* `--triton-trace` no longer emits `|triton` ranges for `torch.compile` / Inductor fused kernels. Inductor now launches those kernels through PyTorch's static launcher, not Triton's Python runtime. Use `--torch-trace`; the GPU kernels nest under `torch.compile.<fn>`. `--triton-trace` still marks `@triton.jit` launches.
+
 ### Removed
 
 * Removed the experimental `--gui` and `--tui` analyze modes and the `--random-port` option. Use the default CLI analyze mode for terminal output, or `--output-format db` to explore results in ROCm Optiq.
   * The `dash`, `dash-bootstrap-components`, `dash-svg`, `textual`, and `textual_plotext` dependencies are no longer installed.
+* Removed the unused `compute_workload_roofline_data` table from the analysis database.
 
 ### Optimized
 
 ### Resolved issues
+
+* `--torch-trace` tensor wraps no longer fail `nn.LazyLinear` device/dtype moves.
 
 ### Upcoming changes
 
@@ -127,6 +132,8 @@ Full documentation for ROCm Compute Profiler is available at [https://rocm.docs.
 * Fixed `analyze -b` crashing when only the gfx950 LDS bandwidth metrics are selected.
 
 ### Upcoming changes
+
+* The analyze-mode `--gui` and `--tui` options are deprecated and will be removed in a future release. Use the default CLI analysis instead.
 
 ### Known issues
 
