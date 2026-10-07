@@ -35,6 +35,7 @@ int RasTestClose(int);
 int RasTestAtexit(void (*)(void));
 uint64_t RasTestClockNano();
 ncclResult_t RasTestDiagnosticsContextInit(struct rasDiagnosticsContext*, const struct ncclComm*);
+void RasTestDiagnosticsGpuInit();
 
 // Redirect the process-wide APIs used by ras.cc before including that file,
 // then restore their real names immediately afterward. Every header that uses
@@ -44,6 +45,7 @@ ncclResult_t RasTestDiagnosticsContextInit(struct rasDiagnosticsContext*, const 
 #define atexit RasTestAtexit
 #define clockNano RasTestClockNano
 #define rasDiagnosticsContextInit RasTestDiagnosticsContextInit
+#define rasDiagnosticsGpuInit RasTestDiagnosticsGpuInit
 
 namespace {
 
@@ -77,6 +79,7 @@ const char* ncclSocketToString(const union ncclSocketAddress*, char* buf, const 
 #undef clockNano
 #undef poll
 #undef rasDiagnosticsContextInit
+#undef rasDiagnosticsGpuInit
 
 namespace {
 
@@ -650,7 +653,7 @@ void rasClientSupportTerminate() { ++g_cleanupCalls[0]; }
 void rasNetTerminate() { ++g_cleanupCalls[1]; }
 void rasCollectivesTerminate() { ++g_cleanupCalls[2]; }
 void rasPeersTerminate() { ++g_cleanupCalls[3]; }
-void rasDiagnosticsGpuInit() { ++g_diagnosticsLoadCalls; }
+void RasTestDiagnosticsGpuInit() { ++g_diagnosticsLoadCalls; }
 ncclResult_t RasTestDiagnosticsContextInit(struct rasDiagnosticsContext* ctx, const struct ncclComm* comm) {
   ++g_diagnosticsInitCalls;
   g_diagnosticsInitComm = comm;
