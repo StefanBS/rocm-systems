@@ -253,6 +253,9 @@ def test_slots_use_terminal_metric_formatting() -> None:
     assert slot(aggregate, "VL1 Hit").text == format_value(100, "%")
     assert slot(aggregate, "VL1 Hit").bar == progress_bar(100)
     assert slot(aggregate, "LDS Allocation").text == format_value(20, " KB")
+    assert slot(aggregate, "LDS Allocation").bar is None
+    assert slot(aggregate, "Wavefront Occupancy").bar is None
+    assert "%" not in slot(aggregate, "Wavefront Occupancy").text
     assert slot(aggregate, "Wavefront Occupancy").unit_label == "waves/CU"
     assert slot(aggregate, "Flat Read").text == format_scientific(16.7)
     assert slot(aggregate, "VL1_L2 Write BW").text == "N/A"

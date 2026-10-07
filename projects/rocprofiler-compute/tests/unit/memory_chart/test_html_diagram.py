@@ -56,6 +56,8 @@ def test_all_shipped_layouts_have_ordered_complete_payload(layout_data: dict) ->
     )
     assert all(block["position"] == "grid" for block in payload["gridBlocks"])
     assert all(block["position"] in {"above", "below"} for block in payload["ioBlocks"])
+    cu = next(block for block in payload["gridBlocks"] if block["id"] == "cu")
+    assert all(not item["bar"] for item in cu["content"])
 
     expected_pairs = list(
         dict.fromkeys((arrow["from"], arrow["to"]) for arrow in layout_data["arrows"])
@@ -105,6 +107,7 @@ def test_gfx1250_children_are_nested_in_declared_order() -> None:
     assert "lds" not in by_id
     assert "icache" not in by_id
     assert by_id["tcp"]["children"][0]["content"][0]["slotId"] == "lds.0"
+    assert by_id["tcp"]["children"][0]["content"][0]["bar"]
 
 
 def test_gfx1250_blocks_without_order_default_to_zero() -> None:
@@ -238,8 +241,8 @@ def test_slot_ids_follow_file_order_and_defaults() -> None:
     assert len(expected_ids) == len(set(expected_ids))
 
     by_id = {spec.slot_id: spec for spec in specs}
-    assert by_id["cu.0"].unit == "%"
-    assert by_id["cu.0"].bar
+    assert by_id["cu.0"].unit == ""
+    assert not by_id["cu.0"].bar
     assert by_id["cu.0"].cu_block
     assert not by_id["vl1d.0"].cu_block
     assert by_id["vl1d.0"].bar
@@ -257,12 +260,24 @@ def test_slot_defaults_and_explicit_units_control_bars() -> None:
         {"metric": "Hit", "title": "Hit", "category": "hit"},
         {"metric": "Cycles", "title": "Cycles", "category": "util", "unit": "cycles"},
         {"metric": "Count", "title": "Count", "category": "info"},
+        {"metric": "Hit Rate", "title": "Hit Rate", "category": "hit", "unit": "%"},
+        {"metric": "Other", "title": "Other", "category": "info", "unit": "%"},
     ]
     specs = slot_specs(layout)
-    assert [(spec.unit, spec.bar, spec.cu_block) for spec in specs[:3]] == [
-        ("%", True, True),
+    assert [(spec.unit, spec.bar, spec.cu_block) for spec in specs[:5]] == [
+        ("", False, True),
         ("cycles", False, True),
         ("", False, True),
+        ("%", True, True),
+        ("%", False, True),
+    ]
+    payload = diagram_payload(layout)
+    assert [item["bar"] for item in payload["gridBlocks"][0]["content"]] == [
+        False,
+        False,
+        False,
+        True,
+        False,
     ]
 
 
