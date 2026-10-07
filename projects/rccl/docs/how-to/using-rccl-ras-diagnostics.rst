@@ -70,8 +70,9 @@ Prerequisites
 
 RAS diagnostics need the RAS subsystem, which is enabled by default
 (``NCCL_RAS_ENABLE=1``). With ``NCCL_RAS_ENABLE=0``, a communicator created
-with ``NCCL_RUN_RAS_DIAGNOSTICS=1`` prints the report header, but no check runs
-and no ``completed`` line follows.
+with ``NCCL_RUN_RAS_DIAGNOSTICS=1`` prints only
+``NCCL DIAG INFO RAS diagnostics skipped: NCCL_RAS_ENABLE=0``: no check runs,
+and no report header or ``completed`` line is printed.
 
 The RAS threads of all processes of the job listen for client connections on
 ``localhost``, port ``28028``. Set ``NCCL_RAS_ADDR`` to change the address, for
@@ -181,7 +182,7 @@ one process per GPU, looks like this:
    node01:4242 NCCL DIAG [OK]   GPU inventory: 8x AMD Instinct MI355X per node consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   ECC: no uncorrected volatile errors across 8 ranks in comm 0x5fa31c27a9e0d1b4
-   node01:4242 NCCL DIAG [OK]   XGMI: found 7 link(s) per device, all active across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   XGMI: 7 links per GPU, all active across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG RAS diagnostics completed in 38.4 ms across 8 ranks
 

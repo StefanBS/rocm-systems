@@ -67,14 +67,17 @@ static const struct rasDiagnosticsCheck rasDiagnosticsChecks[RAS_DIAG_CHECK_COUN
   {RAS_DIAG_CHECK_ECC, rasDiagnosticsEccCollectLocal, rasDiagnosticsEccSummarize},
   {RAS_DIAG_CHECK_NVLINK, rasDiagnosticsNvLinkCollectLocal, rasDiagnosticsNvLinkSummarize},
   {RAS_DIAG_CHECK_NCCL_ENV, rasDiagnosticsNcclEnvCollectLocal, rasDiagnosticsNcclEnvSummarize},
+  {RAS_DIAG_CHECK_RDMA_TOPO, rasDiagnosticsRdmaTopoCollectLocal, rasDiagnosticsRdmaTopoSummarize},
+  {RAS_DIAG_CHECK_IOMMU_MODE, rasDiagnosticsIommuCollectLocal, rasDiagnosticsIommuSummarize},
+  {RAS_DIAG_CHECK_ATS, rasDiagnosticsAtsCollectLocal, rasDiagnosticsAtsSummarize},
+  {RAS_DIAG_CHECK_XID_SXID, rasDiagnosticsXidCollectLocal, rasDiagnosticsXidSummarize},
+  {RAS_DIAG_CHECK_NVIDIA_DRIVER_VERSION, rasDiagnosticsNvidiaDriverVersionCollectLocal,
+   rasDiagnosticsNvidiaDriverVersionSummarize},
+  {RAS_DIAG_CHECK_PATHS, rasDiagnosticsPathsCollectLocal, rasDiagnosticsPathsSummarize},
 };
 
 static ncclResult_t rasDiagnosticsSummarizePeerPayloads(
   const struct rasDiagnosticsContext* ctx, const struct rasDiagnosticsReporter* reporter, const char* data, int nData);
-
-void rasDiagnosticsInit() {
-  rasDiagnosticsGpuInit();
-}
 
 ncclResult_t rasDiagnosticsContextInit(struct rasDiagnosticsContext* ctx, const struct ncclComm* comm) {
   if (ctx == nullptr) {

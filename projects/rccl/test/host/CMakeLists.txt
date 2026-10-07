@@ -66,17 +66,21 @@ foreach(_entry IN LISTS _rccl_ras_markers)
   endforeach()
   rccl_assert_source_line("${_rccl_ras_tests}" "\"${_marker}\"," "the report lines it marks in src/${_ras_sources}")
 endforeach()
-# The check labels and the report header it parses the report by, which src emits as the start of a literal.
+# The check labels, the report header and the skip line it parses the report by. src emits each as the start of a
+# literal; a check label may be passed on without its ": ".
 set(_rccl_ras_labels
   "ras/diagnostics_gpu.cc|GPU inventory: "
   "ras/diagnostics_gpu.cc|ECC: "
   "ras/diagnostics_env.cc|NCCL environment: "
-  "ras/ras.cc|NCCL DIAG === RAS Diagnostics ===")
+  "ras/ras.cc|NCCL DIAG === RAS Diagnostics ==="
+  "ras/ras.cc|NCCL DIAG INFO RAS diagnostics skipped: NCCL_RAS_ENABLE=0")
 foreach(_entry IN LISTS _rccl_ras_labels)
   string(REPLACE "|" ";" _ras_pair "${_entry}")
   list(GET _ras_pair 0 _ras_cc)
   list(GET _ras_pair 1 _label)
-  rccl_assert_source_line("${_rccl_src_root}/${_ras_cc}" "\"${_label}" "the RAS labels in test/RasDiagnosticsTests.cpp")
+  string(REGEX REPLACE ": $" "" _src_label "${_label}")
+  rccl_assert_source_line("${_rccl_src_root}/${_ras_cc}" "\"${_src_label}"
+    "the RAS labels in test/RasDiagnosticsTests.cpp")
   rccl_assert_source_line("${_rccl_ras_tests}" "= \"${_label}\"" "the report lines it labels in src/${_ras_cc}")
 endforeach()
 # The driver label is a macro on the AMD SMI arm of diagnostics_gpu.cc.
@@ -87,6 +91,7 @@ rccl_assert_source_line("${_rccl_ras_tests}" "= \"HIP driver version: \""
 unset(_rccl_ras_tests)
 unset(_rccl_ras_markers)
 unset(_rccl_ras_labels)
+unset(_src_label)
 unset(_ras_pair)
 unset(_ras_sources)
 unset(_ras_files)
@@ -105,6 +110,11 @@ endforeach()
 rccl_assert_source_line("${CMAKE_CURRENT_LIST_DIR}/gdr-probe-test.cc"
   "${_rccl_reg_access_flags}" "the production registration flags")
 unset(_rccl_reg_access_flags)
+# fakes/topo_stubs.cc copies the AMD arm of topoPathTypeStr; pin both copies to one spelling.
+foreach(_path_cc "${_rccl_src_root}/graph/topo.cc" "${CMAKE_CURRENT_LIST_DIR}/fakes/topo_stubs.cc")
+  rccl_assert_source_line("${_path_cc}" "const char* topoPathTypeStr[] = {\"LOC\", \"XGMI\", \"NVB\", \"C2C\", \"PIX\", \
+\"PXB\", \"P2C\", \"PXN\", \"PHB\", \"SYS\", \"NET\", \"DIS\"};" "fakes/topo_stubs.cc: topoPathTypeStr")
+endforeach()
 unset(_rccl_src_root)
 
 # Define the per-target micro-test source lists shared by BOTH build paths.
@@ -120,6 +130,8 @@ function(rccl_define_micro_source_lists)
     ras-test.cc
     ras-diagnostics-common-test.cc       # src/ras/diagnostics_checks_common.cc
     ras-diagnostics-gpu-test.cc          # src/ras/diagnostics_gpu.cc (AMD SMI arm)
+    ras-collectives-test.cc              # src/ras/collectives.cc
+    ras-diagnostics-test.cc              # src/ras/diagnostics.cc
     tuning-test.cc                       # src/tuning/tuning.cc
     tuning-general-test.cc
     ras-client-test.cc
@@ -327,6 +339,18 @@ function(rccl_define_micro_source_lists)
     ${RCCL_HOST_HIPIFY_DIR}/src/misc/argcheck.cc  # real PtrCheck/CommCheck
     ${RCCL_HOST_HIPIFY_DIR}/src/misc/archinfo.cc  # real IsArchMatch
     ${RCCL_HOST_HIPIFY_DIR}/src/misc/utils.cc     # real busId/hash helpers
+    ../common/main_altrsmi.cpp
+    PARENT_SCOPE)
+
+  # src/diagnostics/p2p.cc; fakes transport/p2p.cc, which rccl-UnitTestsMicro compiles.
+  set(TEST_MICRO_DIAGNOSTICS_SOURCE_FILES
+    diag-p2p-test.cc
+    fakes/dev_runtime_micro_fakes.cc     # bootstrap collectives
+    fakes/diagnostics_p2p_device_fakes.cc  # src/diagnostics/device/p2p.cu
+    fakes/hip_fakes.cc
+    fakes/nccl_fakes.cc
+    fakes/topo_stubs.cc
+    fakes/transport_p2p_fakes.cc         # src/transport/p2p.cc shareable buffers
     ../common/main_altrsmi.cpp
     PARENT_SCOPE)
 endfunction()
@@ -794,6 +818,10 @@ rccl_add_micro_binary(rccl-UnitTestsMicro
     RAS_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/ras/ras.cc"
     RAS_DIAGNOSTICS_COMMON_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/ras/diagnostics_checks_common.cc"
     RAS_DIAGNOSTICS_GPU_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/ras/diagnostics_gpu.cc"
+    # collectives_tmp.cc, not collectives.cc: src/CMakeLists.txt lists src/collectives.cc first,
+    # so add_file_unique() renames this one. Re-check after any source-list reorder.
+    COLLECTIVES_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/ras/collectives_tmp.cc"
+    RAS_DIAGNOSTICS_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/ras/diagnostics_tmp.cc"
     # graph/tuning.cc keeps the basename, so add_file_unique() renames this one.
     TUNING_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/tuning/tuning_tmp.cc"
     TUNING_GENERAL_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/tuning/tuning_general.cc"
@@ -942,6 +970,16 @@ rccl_add_micro_binary(rccl-UnitTestsMicroTaskPrep
     TASK_SCHED_RMA_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/enqueue/task_sched/rma_sched.cc"
     TASK_SCHED_CE_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/enqueue/task_sched/ce_sched.cc"
   CATEGORIES_YAML "${CMAKE_CURRENT_SOURCE_DIR}/../test_categories_micro_taskprep.yaml")
+
+# ---------------------------------------------------------------------------
+# rccl-UnitTestsMicroDiagnostics
+# ---------------------------------------------------------------------------
+rccl_add_micro_binary(rccl-UnitTestsMicroDiagnostics
+  SOURCES ${TEST_MICRO_DIAGNOSTICS_SOURCE_FILES}
+  EXTRA_DEFS
+    ${_MICRO_MODE_DEFS}
+    DIAG_P2P_CC_PATH="${RCCL_HOST_HIPIFY_DIR}/src/diagnostics/p2p.cc"
+  CATEGORIES_YAML "${CMAKE_CURRENT_SOURCE_DIR}/../test_categories_micro_diagnostics.yaml")
 
 # =====================================================================
 # Standalone-only tail: coverage + no CTest registration.

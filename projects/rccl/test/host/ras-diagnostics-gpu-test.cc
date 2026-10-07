@@ -225,7 +225,7 @@ TEST_F(RasDiagnosticsGpuMicrotest, HealthyNodesReportOkForEveryCheck) {
   EXPECT_EQ(Lines{"[OK]   HIP driver version: 70253211 consistent across 4 ranks in comm 0x5fa31c27a9e0d1b4"},
             RunDriverVersion());
   EXPECT_EQ(Lines{"[OK]   ECC: no uncorrected volatile errors across 4 ranks in comm 0x5fa31c27a9e0d1b4"}, RunEcc());
-  EXPECT_EQ(Lines{"[OK]   XGMI: found 7 link(s) per device, all active across 4 ranks in comm 0x5fa31c27a9e0d1b4"},
+  EXPECT_EQ(Lines{"[OK]   XGMI: 7 links per GPU, all active across 4 ranks in comm 0x5fa31c27a9e0d1b4"},
             RunXgmi());
 }
 

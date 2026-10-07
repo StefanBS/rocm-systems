@@ -22,6 +22,12 @@ typedef enum {
   RAS_DIAG_CHECK_ECC = 2,
   RAS_DIAG_CHECK_NVLINK = 3,
   RAS_DIAG_CHECK_NCCL_ENV = 4,
+  RAS_DIAG_CHECK_RDMA_TOPO = 5,
+  RAS_DIAG_CHECK_IOMMU_MODE = 6,
+  RAS_DIAG_CHECK_ATS = 7,
+  RAS_DIAG_CHECK_XID_SXID = 8,
+  RAS_DIAG_CHECK_NVIDIA_DRIVER_VERSION = 9,
+  RAS_DIAG_CHECK_PATHS = 10,
   // Must remain last. Add new check IDs above this sentinel and add the corresponding dispatch table entry.
   RAS_DIAG_CHECK_COUNT
 } rasDiagnosticsCheckId;
@@ -91,9 +97,6 @@ struct rasDiagnosticsCheckPayloadHeader {
   int payloadBytes; // Only the records following this header.
 };
 
-// Loads the data sources of the checks. Every peer collects its local data before forwarding a diagnostics request,
-// so a source loaded on first use delays the request once per hop; a short-lived communicator can be gone by then.
-void rasDiagnosticsInit();
 ncclResult_t rasDiagnosticsContextInit(struct rasDiagnosticsContext* ctx, const struct ncclComm* comm);
 ncclResult_t rasDiagnosticsFormatLine(char* out, size_t outSize, const char* line);
 ncclResult_t rasLocalHandleRunDiag(const struct rasDiagnosticsContext* ctx);
