@@ -36,6 +36,9 @@ The report has one result per check and communicator:
   of the GPU used by each rank.
 * **HIP driver version:** compares the driver version that the HIP runtime
   reports (``hipDriverGetVersion``) across the ranks.
+* **AMD GPU driver version:** compares the version of the ``amdgpu`` kernel
+  driver that serves the GPU of each rank, as ``/sys/module/amdgpu/version``
+  shows it, across the ranks.
 * **ECC:** reports the ranks whose GPU has uncorrectable or deferred ECC
   errors. With ``NCCL_DIAGNOSTICS_ECC_THRESHOLD`` set, it also reports the
   ranks whose GPU has at least that many correctable errors.
@@ -46,7 +49,8 @@ The report has one result per check and communicator:
   environment variables across the ranks and lists the ranks of every value
   that differs.
 
-The GPU inventory, ECC, and XGMI checks read AMD SMI (``libamd_smi.so``), the
+The GPU inventory, AMD GPU driver version, ECC, and XGMI checks read AMD SMI
+(``libamd_smi.so``), the
 same source as the ``amd-smi`` tool. With ``NCCL_RUN_RAS_DIAGNOSTICS=1``, RCCL
 loads the library when the process creates its first communicator; otherwise,
 the first time the diagnostics run. This does not depend on the value of
@@ -55,11 +59,13 @@ blocks of the GPU, which ``amd-smi metric --ecc`` shows per block. On a GPU
 in a compute partition mode such as CPX or DPX, a rank whose partition AMD SMI
 does not list reports the model, ECC counters, and XGMI links of the physical
 GPU. Use ``amd-smi`` to inspect a GPU that the report names, for example
-``amd-smi metric --ecc`` and ``amd-smi xgmi``.
+``amd-smi static --driver``, ``amd-smi metric --ecc``, and ``amd-smi xgmi``.
 
-If AMD SMI cannot be loaded or does not answer for a GPU, the GPU inventory and
-ECC checks report ``unavailable via AMD SMI``. Such results are tagged
-``[INFO]`` and do not indicate a problem with the system. The XGMI check prints
+If AMD SMI cannot be loaded or does not answer for a GPU, the GPU inventory,
+AMD GPU driver version, and ECC checks report ``unavailable via AMD SMI``. The
+AMD GPU driver version is also unavailable with an ``amdgpu`` driver that is
+built into the kernel, which has no ``/sys/module/amdgpu/version``. Such
+results are tagged ``[INFO]`` and do not indicate a problem with the system. The XGMI check prints
 no line when no GPU answers; a GPU that does not answer while others do counts
 as having no links and is reported as a link-count mismatch. Set
 ``NCCL_DEBUG=INFO`` and ``NCCL_DEBUG_SUBSYS=RAS`` to log the AMD SMI query that
@@ -184,6 +190,7 @@ one process per GPU, looks like this:
    node01:4242 NCCL DIAG [OK]   ECC: no uncorrected volatile errors across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   XGMI: 7 links per GPU, all active across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
+   node01:4242 NCCL DIAG [OK]   AMD GPU driver version: 6.16.13.30300000 consistent across 8 ranks in comm 0x5fa31c27a9e0d1b4
    node01:4242 NCCL DIAG RAS diagnostics completed in 38.4 ms across 8 ranks
 
 The ``completed`` line of an initialization-time report counts the ranks of
@@ -239,6 +246,12 @@ The ``[INFO]`` results that need attention:
    * - ``HIP driver version: mismatch``
      - The listed ranks run a different driver version. Compare the installed
        ROCm and ``amdgpu`` driver versions on those nodes.
+   * - ``AMD GPU driver version: mismatch``
+     - The GPUs of the listed ranks are served by a different ``amdgpu``
+       driver than the GPU of the lowest rank of the communicator, whose
+       version is shown in parentheses. A rank whose version AMD SMI could not
+       read differs as well. Compare ``amd-smi static --driver`` on those
+       nodes.
    * - ``ECC: uncorrected volatile errors on rank(s)``
      - The GPUs of the listed ranks have uncorrectable or deferred ECC errors.
        ``worst`` is the highest count. Inspect them with ``amd-smi metric --ecc``.

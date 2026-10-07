@@ -71,6 +71,7 @@ static const char* const kTagInfo    = "NCCL DIAG [INFO] ";
 // Labels of the checks in src/ras/diagnostics_checks.h that print a line on every system.
 static const char* const kGpuInventory = "GPU inventory: ";
 static const char* const kDriver       = "HIP driver version: ";
+static const char* const kGpuDriver    = "AMD GPU driver version: ";
 static const char* const kEcc          = "ECC: ";
 static const char* const kEnv          = "NCCL environment: ";
 // The link check prints nothing when no device reports an XGMI link.
@@ -448,6 +449,15 @@ static bool eccCountersExpected()
     return false;
 }
 
+// Whether this host has the amdgpu version that AMD SMI reports; an in-tree amdgpu has no
+// /sys/module/amdgpu/version.
+static bool amdgpuVersionKnown()
+{
+    std::string version;
+    std::ifstream("/sys/module/amdgpu/version") >> version;
+    return !version.empty();
+}
+
 // Whether the RAS diagnostics can load AMD SMI on this host. Keep in sync with amd_smi_diagLoadImpl
 // (src/misc/amdsmi_wrap.cc): no AMD SMI under WSL2, and the library is opened by its versioned SONAME. This target
 // may not see the amdsmi header that librccl is built with, so the unversioned name is tried as well.
@@ -473,10 +483,10 @@ static bool amdSmiLoadable()
 
 // nReports reports covering nComms communicators (one per report by default) of nRanks ranks each: one header and
 // one completion line per report, one line per check and communicator covering all ranks, no failure line and no
-// NVIDIA term. Driver version and NCCL environment are [OK]; GPU inventory is [OK] if AMD SMI is readable and
-// unavailable otherwise. A readable AMD SMI must have answered the inventory and ECC checks, except on non-Instinct
-// GPUs; the ECC result, like the XGMI line, may report a health finding instead of [OK]. Call sites wrap it in
-// ASSERT_NO_FATAL_FAILURE.
+// NVIDIA term. HIP driver version and NCCL environment are [OK]; GPU inventory and AMD GPU driver version are [OK]
+// if AMD SMI is readable and unavailable otherwise. A readable AMD SMI must have answered the inventory and ECC
+// checks, except on non-Instinct GPUs, and the AMD GPU driver version, except with an in-tree amdgpu; the ECC result,
+// like the XGMI line, may report a health finding instead of [OK]. Call sites wrap it in ASSERT_NO_FATAL_FAILURE.
 static void expectCompleteReport(const RasReport& report, int nRanks, const std::string& doneScope, int nReports = 1,
                                  int nComms = 0, bool amdSmiReadable = amdSmiLoadable())
 {
@@ -486,7 +496,7 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
     // ECC counters read on some ranks only: "across <n> of <nRanks> ranks".
     const std::string ofRanks = " of " + std::to_string(nRanks) + " ranks";
     EXPECT_EQ(report.count(kRasHeader), nReports) << report.dump();
-    for(const char* label : {kGpuInventory, kDriver, kEcc, kEnv})
+    for(const char* label : {kGpuInventory, kDriver, kGpuDriver, kEcc, kEnv})
     {
         const std::vector<std::string> lines = report.checkLines(label);
         ASSERT_EQ(lines.size(), static_cast<size_t>(nComms)) << label << "\n" << report.dump();
@@ -517,6 +527,20 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
         EXPECT_EQ(report.count(std::string(kTagInfo) + kGpuInventory + "unavailable via AMD SMI"), nComms)
             << report.dump();
     }
+    int nGpuDriverUnavailable = 0;
+    for(const std::string& line : report.checkLines(kGpuDriver))
+        if(line.find("unavailable via AMD SMI") != std::string::npos)
+            ++nGpuDriverUnavailable;
+    if(amdSmiReadable)
+    {
+        EXPECT_EQ(report.count(std::string(kTagOk) + kGpuDriver) + nGpuDriverUnavailable, nComms) << report.dump();
+        if(nGpuDriverUnavailable > 0)
+            EXPECT_FALSE(amdgpuVersionKnown()) << "AMD SMI gave no amdgpu version\n" << report.dump();
+    }
+    else
+    {
+        EXPECT_EQ(nGpuDriverUnavailable, nComms) << report.dump();
+    }
     EXPECT_EQ(report.count(std::string(kTagOk) + kEnv + "NCCL_* env vars consistent " + across), nComms)
         << report.dump();
     EXPECT_EQ(report.count(std::string(kTagOk) + kDriver), nComms) << report.dump();
@@ -526,7 +550,14 @@ static void expectCompleteReport(const RasReport& report, int nRanks, const std:
             ++nEccUnavailable;
     if(nEccUnavailable > 0 && amdSmiReadable)
         EXPECT_FALSE(eccCountersExpected()) << "AMD SMI gave no ECC counters for an Instinct GPU\n" << report.dump();
-    EXPECT_EQ(report.count("unavailable"), nEccUnavailable + nInventoryPartial + (amdSmiReadable ? 0 : nComms))
+    // Only the lines of these checks: the checks that read PCI devices or the kernel log may be unavailable anywhere.
+    int nUnavailable = 0;
+    for(const char* label : {kGpuInventory, kDriver, kGpuDriver, kEcc, kEnv, kXgmi})
+        for(const std::string& line : report.checkLines(label))
+            if(line.find("unavailable") != std::string::npos)
+                ++nUnavailable;
+    EXPECT_EQ(nUnavailable,
+              nEccUnavailable + nInventoryPartial + nGpuDriverUnavailable + (amdSmiReadable ? 0 : nComms))
         << report.dump();
     for(const char* term : kNvidiaTerms)
         EXPECT_EQ(report.count(term), 0) << term << "\n" << report.dump();
@@ -552,7 +583,7 @@ static std::string commIdOf(const std::string& line)
 static void expectOneReportPerComm(const RasReport& report, int nComms)
 {
     std::set<std::string> comms;
-    for(const char* label : {kGpuInventory, kDriver, kEcc, kEnv})
+    for(const char* label : {kGpuInventory, kDriver, kGpuDriver, kEcc, kEnv})
     {
         std::set<std::string> ids;
         for(const std::string& line : report.checkLines(label))
@@ -896,7 +927,7 @@ TEST_F(RasDiagnostics, EnvMismatchAcrossProcesses)
         EXPECT_EQ(report.count(env + kMarkerVar + "=r1 on rank(s) {1}"), 1) << report.dump();
         EXPECT_EQ(report.count(env + "1 NCCL_* env var(s) differ across ranks in comm 0x"), 1) << report.dump();
         EXPECT_EQ(report.count("NCCL_* env vars consistent"), 0) << report.dump();
-        for(const char* label : {kGpuInventory, kDriver, kEcc})
+        for(const char* label : {kGpuInventory, kDriver, kGpuDriver, kEcc})
             EXPECT_EQ(report.checkLines(label).size(), 1u) << label << "\n" << report.dump();
         EXPECT_EQ(report.count(kRasDone), 1) << report.dump();
         EXPECT_EQ(report.countDone("2 ranks"), 1) << report.dump();
@@ -977,7 +1008,7 @@ TEST_F(RasDiagnostics, RasDisabledRunsNoChecks)
         EXPECT_EQ(report.count(kRasHeader), 0) << report.dump();
         EXPECT_EQ(report.lines.size(), 1u) << report.dump();
         EXPECT_EQ(report.count(kRasDone), 0) << report.dump();
-        for(const char* label : {kGpuInventory, kDriver, kEcc, kEnv})
+        for(const char* label : {kGpuInventory, kDriver, kGpuDriver, kEcc, kEnv})
             EXPECT_TRUE(report.checkLines(label).empty()) << label << "\n" << report.dump();
     }}});
 }
@@ -993,12 +1024,14 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
           "in comm 0x1f\n"
           "NCCL INFO unrelated log line\n"
           "node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [OK]   AMD GPU driver version: 6.19.14.31400000 consistent across 8 ranks in comm "
+          "0x1f\n"
           "node01:4242 NCCL DIAG [OK]   ECC: no uncorrected volatile errors across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   XGMI: 7 links per GPU, all active across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG RAS diagnostics completed in 41.7 ms across 8 ranks\n";
     const RasReport report = parseRasReport(captured);
-    ASSERT_EQ(report.lines.size(), 7u) << report.dump();
+    ASSERT_EQ(report.lines.size(), 8u) << report.dump();
     EXPECT_EQ(report.lines.front(), kRasHeader);
     ASSERT_NO_FATAL_FAILURE(expectCompleteReport(report, 8, "8 ranks", 1, 1, true));
     EXPECT_TRUE(parseRasReport("no report here\n").lines.empty());
@@ -1008,6 +1041,7 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
         = "node01:4242 NCCL DIAG === RAS Diagnostics ===\n"
           "node01:4242 NCCL DIAG [INFO] GPU inventory: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [INFO] AMD GPU driver version: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [INFO] ECC: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG RAS diagnostics completed in 41.7 ms across 8 ranks\n";
@@ -1019,6 +1053,7 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
         = "node01:4242 NCCL DIAG === RAS Diagnostics ===\n"
           "node01:4242 NCCL DIAG [INFO] GPU inventory: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [INFO] AMD GPU driver version: unavailable via AMD SMI across 8 ranks in comm 0x1f\n"
           "node01:4242 NCCL DIAG [INFO] ECC: no uncorrected volatile errors across 6 of 8 ranks in comm 0x1f "
           "(ECC counters unavailable via AMD SMI on 2 ranks)\n"
           "node01:4242 NCCL DIAG [OK]   NCCL environment: NCCL_* env vars consistent across 8 ranks in comm 0x1f\n"
@@ -1031,6 +1066,8 @@ TEST_F(RasDiagnostics, ReportParserOnFixedCapture)
           "node01:4242 NCCL DIAG [OK]   GPU inventory: 8x AMD Instinct MI355X per node consistent across 8 ranks "
           "in comm 0x1f\n"
           "node01:4242 NCCL DIAG [OK]   HIP driver version: 71526333 consistent across 8 ranks in comm 0x1f\n"
+          "node01:4242 NCCL DIAG [OK]   AMD GPU driver version: 6.19.14.31400000 consistent across 8 ranks in comm "
+          "0x1f\n"
           "node01:4242 NCCL DIAG [INFO] ECC: uncorrected volatile errors on rank(s) {2} (worst=1) across 8 ranks "
           "in comm 0x1f\n"
           "node01:4242 NCCL DIAG [INFO] XGMI: inactive link(s) on rank(s) {5} across 8 ranks in comm 0x1f\n"
