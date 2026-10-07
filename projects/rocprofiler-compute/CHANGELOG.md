@@ -21,6 +21,8 @@ Full documentation for ROCm Compute Profiler is available at [https://rocm.docs.
 
 ### Resolved issues
 
+* `--torch-trace` tensor wraps no longer fail `nn.LazyLinear` device/dtype moves.
+
 ### Upcoming changes
 
 ### Known issues
