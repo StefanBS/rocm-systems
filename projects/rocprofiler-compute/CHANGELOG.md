@@ -13,6 +13,10 @@ Full documentation for ROCm Compute Profiler is available at [https://rocm.docs.
 
 * Added the xGMI block to the gfx90a and gfx940–gfx942 Memory Charts, which previously showed it only on gfx950. The block is drawn without bandwidth counters on these architectures.
 
+* Added a self-contained Memory Chart HTML report to CLI analysis. Each analyzed
+  workload with a Memory Chart now gets a `mem_chart*.html` page with aggregate
+  and per-kernel views, GPU and dispatch filtering, and an offline theme toggle.
+
 ### Changed
 
 * Renamed the Memory Chart left-hand panel from "Kernel" to "Compute Units" across all architectures. The panel now shows resource allocation stats (Wave Occupancy, vGPRs, sGPRs, Scratch, LDS Allocation, Workgroups).

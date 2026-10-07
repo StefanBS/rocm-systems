@@ -23,6 +23,14 @@ cache level, because it tells you which level to open.
 
 Always analyze one kernel at a time with `-k`.
 
+CLI memory chart analysis also writes `mem_chart.html` in the workload directory
+for offline browsing. Select a kernel or use **Show all** for the aggregate;
+the header follows the selection and displays normalization and filter scope.
+Scroll to zoom, drag to pan, and use **Reset zoom**, **Fit diagram**, or a
+double-click to fit the hierarchy. **Export PNG** saves the current diagram
+view, and **Dark mode** switches the theme. Expand **Metrics** to read the
+tables; they start collapsed and keep their widths when switching kernels.
+
 ## 2. Open the level the chart points at
 
 ```bash

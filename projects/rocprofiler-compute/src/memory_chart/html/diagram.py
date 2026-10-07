@@ -6,7 +6,7 @@
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Mapping, Optional, Set, Tuple, TypedDict
 
-from ..loader import Layout, LayoutArrow, LayoutBlock
+from ..loader import Layout, LayoutArrow, LayoutBlock, LayoutContentItem
 from ..mem_chart import _find_scope_split
 
 _BAR_CATEGORIES = frozenset({"hit", "util", "stall"})
@@ -81,10 +81,7 @@ def slot_specs(layout: Layout) -> Tuple[SlotSpec, ...]:
                     category=category,
                     on_arrow=False,
                     cu_block=block["column"] == 0,
-                    bar=(
-                        item.get("unit", "") == "%"
-                        and item["category"] in _BAR_CATEGORIES
-                    ),
+                    bar=_content_has_bar(item),
                 )
             )
 
@@ -166,9 +163,7 @@ def _block_payload(
         {
             **item,
             "slotId": f"{block['id']}.{index}",
-            "bar": (
-                item.get("unit", "") == "%" and item["category"] in _BAR_CATEGORIES
-            ),
+            "bar": _content_has_bar(item),
         }
         for index, item in enumerate(block["content"])
     ]
@@ -177,6 +172,11 @@ def _block_payload(
         for child_id in block.get("children", [])
     ]
     return payload
+
+
+def _content_has_bar(item: LayoutContentItem) -> bool:
+    """Show a bar only for an explicitly marked percentage metric."""
+    return item.get("unit", "") == "%" and item["category"] in _BAR_CATEGORIES
 
 
 def _arrow_groups(arrows: List[LayoutArrow]) -> List[ArrowGroup]:
