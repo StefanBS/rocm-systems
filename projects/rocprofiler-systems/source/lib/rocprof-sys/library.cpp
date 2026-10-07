@@ -1539,7 +1539,7 @@ rocprofsys_finalize_hidden(void)
         const auto processes = output::registry::instance().processes();
         const auto tree      = output::process_tree{ rows, processes };
         const auto meta      = output::run_metadata::capture(library_load_time);
-        output::write_summary(std::cout, tree, meta, rows, processes.size());
+        std::cout << output::format_summary(tree, meta, rows, processes.size());
     }
 
     categories::shutdown();
