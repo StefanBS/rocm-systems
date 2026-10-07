@@ -5,6 +5,7 @@
 
 import csv
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from tests.integration.common import (
 )
 from utils import csv_compression
 from utils.inject_roctx._backends import torch_trace_collector
+
+pytestmark = pytest.mark.torch_trace
 
 MARKER_API_COLUMNS = {
     "Domain",
@@ -236,17 +239,19 @@ def torch_trace_profiled_workload(
 ):
     """Profile simple_net with --torch-trace and return the workload directory."""
     require_torch(gpu=True)
+    if torch_trace_collector._find_collector() is None:
+        pytest.skip("torch_trace_collector .so not found")
     if not torch_trace_workload_state["profiled"]:
         workload_dir = common.get_output_dir(param_id="torch_trace")
         torch_trace_workload_state["dir"] = workload_dir
         # Use the interpreter whose Torch version the marker assertions check.
-        workload_config = dict(config)
-        workload_config["torch_test_app"] = [
+        profile_config = dict(config)
+        profile_config["torch_test_app"] = [
             sys.executable,
             *config["torch_test_app"][1:],
         ]
         returncode = binary_handler_profile_rocprof_compute(
-            workload_config,
+            profile_config,
             workload_dir,
             [
                 "--experimental",
@@ -261,7 +266,6 @@ def torch_trace_profiled_workload(
     return torch_trace_workload_state["dir"]
 
 
-@pytest.mark.torch_trace
 def test_torch_trace_profile_csvs(torch_trace_profiled_workload):
     """Check profile CSVs and Torch argument, scope, and launcher metadata."""
     workload_dir = torch_trace_profiled_workload
@@ -289,11 +293,23 @@ def test_torch_trace_profile_csvs(torch_trace_profiled_workload):
                 )
             marker_rows = list(reader)
             assert marker_rows, f"{marker_file} is empty"
+            functions = []
             for row in marker_rows:
+                functions.append(row["Function"])
                 assert row["Function"], f"Empty Function in {marker_file}"
                 assert row["Correlation_Id"], f"Empty Correlation ID in {marker_file}"
                 assert row["Start_Timestamp"], f"Empty Start_Timestamp in {marker_file}"
                 assert row["End_Timestamp"], f"Empty End_Timestamp in {marker_file}"
+            assert any("nn.Module.Linear.forward" in fn for fn in functions)
+            assert any("aten::addmm" in fn for fn in functions)
+            assert any("scope=FUNCTION" in fn for fn in functions)
+            assert any("|seqNr=" in fn for fn in functions)
+            assert any("|tid=" in fn for fn in functions)
+            assert any("|ftid=" in fn for fn in functions)
+            assert any("|ltid=" in fn for fn in functions)
+            assert any("|scope=" in fn for fn in functions)
+            assert any("|args=" in fn for fn in functions)
+            assert any(fn.endswith("|torch") for fn in functions)
         check_torch_trace_markers(marker_rows, torch_version)
         with csv_compression.open_gzip_csv_read(corresponding_counter_file) as f:
             reader = csv.DictReader(f)
@@ -324,7 +340,6 @@ def test_torch_trace_profile_csvs(torch_trace_profiled_workload):
             assert found_row, f"{corresponding_counter_file} is empty"
 
 
-@pytest.mark.torch_trace
 def test_torch_trace_overhead(binary_handler_profile_rocprof_compute):
     """Compare host and GPU timeline overhead with and without --torch-trace.
 
@@ -415,7 +430,6 @@ def test_torch_trace_overhead(binary_handler_profile_rocprof_compute):
     )
 
 
-@pytest.mark.torch_trace
 @pytest.mark.parametrize(
     "workload_cmd, expected_exit",
     [
@@ -554,7 +568,6 @@ def test_profile_invalid_workloads_no_torch_trace(
     common.clean_output_dir(config["cleanup"], workload_dir)
 
 
-@pytest.mark.torch_trace
 def test_torch_trace_deep_tensor_wraps_overhead(
     binary_handler_profile_rocprof_compute,
 ):
@@ -631,3 +644,236 @@ def test_torch_trace_deep_tensor_wraps_overhead(
     print(f"  Deep-wraps kernel duration:  {deep_kernel:.0f} ns")
     print(f"  Kernel overhead:             {kernel_overhead:.1f}%")
     print("=" * 70 + "\n")
+
+
+def test_list_torch_operators_prints_call_tree(
+    torch_trace_profiled_workload, binary_handler_analyze_rocprof_compute, capsys
+):
+    code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--list-torch-operators",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert code == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "PyTorch Operator Call Tree:" in out
+    assert "nn.Module.Linear.forward" in out
+    assert "aten::addmm" in out
+    assert "(id " in out
+    assert not (
+        Path(torch_trace_profiled_workload) / "ml_api_trace" / "consolidated.csv"
+    ).exists()
+
+
+def test_torch_operator_addmm_selects_kernels(
+    torch_trace_profiled_workload, binary_handler_analyze_rocprof_compute, capsys
+):
+    code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--torch-operator",
+        "*addmm*",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert code == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "Matched PyTorch Operators:" in out
+    assert "aten::addmm" in out
+    assert "nn.Module.Linear.forward" in out
+    assert "operator filter selected" in out
+
+
+def test_list_torch_operators_wins_over_filter(
+    torch_trace_profiled_workload, binary_handler_analyze_rocprof_compute, capsys
+):
+    code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--list-torch-operators",
+        "--torch-operator",
+        "*addmm*",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert code == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "Defaulting to listing" in out
+    assert "PyTorch Operator Call Tree:" in out
+    assert "Matched PyTorch Operators:" not in out
+
+
+def test_torch_operator_intersects_kernel_id(
+    torch_trace_profiled_workload, binary_handler_analyze_rocprof_compute, capsys
+):
+    list_code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--list-torch-operators",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert list_code == 0
+    captured = capsys.readouterr()
+    list_out = captured.out + captured.err
+    addmm_idx = list_out.find("aten::addmm")
+    assert addmm_idx >= 0
+    match = re.search(r"\(id (\d+)\)", list_out[addmm_idx:])
+    assert match is not None
+    kernel_id = match.group(1)
+    code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--torch-operator",
+        "*addmm*",
+        "--kernel",
+        kernel_id,
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert code == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "operator filter selected 1 kernel" in out
+
+
+def test_torch_operator_with_dispatch_filter(
+    torch_trace_profiled_workload, binary_handler_analyze_rocprof_compute, capsys
+):
+    list_code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--list-torch-operators",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert list_code == 0
+    capsys.readouterr()
+    dispatch_csv = Path(torch_trace_profiled_workload) / "pmc_dispatch_info.csv"
+    dispatch_df = pd.read_csv(dispatch_csv)
+    row_one = dispatch_df[dispatch_df["Dispatch_ID"].astype(int) == 1]
+    assert not row_one.empty
+    dispatch_one_kernel = str(row_one.iloc[0]["Kernel_Name"])
+    code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--torch-operator",
+        "*",
+        "--dispatch",
+        "1",
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert code == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    kernel_top = pd.read_csv(Path(torch_trace_profiled_workload) / "pmc_kernel_top.csv")
+    assert set(kernel_top["Kernel_Name"].astype(str)) == {dispatch_one_kernel}
+    assert "operator filter selected" in out
+    miss = dispatch_df[
+        ~dispatch_df["Kernel_Name"]
+        .astype(str)
+        .str.contains("addmm", case=False, na=False)
+    ]
+    assert not miss.empty
+    miss_id = str(int(miss.iloc[0]["Dispatch_ID"]))
+    miss_code = binary_handler_analyze_rocprof_compute([
+        "--experimental",
+        "analyze",
+        "--torch-operator",
+        "*addmm*",
+        "--dispatch",
+        miss_id,
+        "--path",
+        torch_trace_profiled_workload,
+    ])
+    assert miss_code == 0
+    captured = capsys.readouterr()
+    miss_out = captured.out + captured.err
+    assert (
+        "No PyTorch kernels mapped to kernel-top IDs" in miss_out
+        or "No PyTorch operators matched" in miss_out
+    )
+
+
+def test_torch_trace_user_range_in_marker_csv(binary_handler_profile_rocprof_compute):
+    require_torch(gpu=True)
+    workload_dir = common.get_output_dir(param_id="torch_trace_user_range")
+    profile_config = dict(config)
+    profile_config["simple_net_user_range"] = [
+        sys.executable,
+        "./sample/simple_net.py",
+        "--user-range",
+    ]
+    try:
+        returncode = binary_handler_profile_rocprof_compute(
+            profile_config,
+            workload_dir,
+            [
+                "--experimental",
+                "--torch-trace",
+                "--iteration-multiplexing",
+            ],
+            check_success=False,
+            app_name="simple_net_user_range",
+        )
+        if returncode == 1:
+            pytest.skip("user-range workload exited 1")
+        assert returncode == 0
+        marker_files = list(Path(workload_dir).glob("**/*marker_api_trace.csv.gz"))
+        assert marker_files
+        functions = []
+        for marker_file in marker_files:
+            with csv_compression.open_gzip_csv_read(marker_file) as f:
+                for row in csv.DictReader(f):
+                    functions.append(row["Function"])
+        assert any(fn == "training_loop" for fn in functions)
+    finally:
+        common.clean_output_dir(config["cleanup"], workload_dir)
+
+
+def test_torch_trace_backward_thread_in_marker_csv(
+    binary_handler_profile_rocprof_compute,
+):
+    require_torch(gpu=True)
+    if torch_trace_collector._find_collector() is None:
+        pytest.skip("torch_trace_collector .so not found")
+    workload_dir = common.get_output_dir(param_id="torch_trace_backward_thread")
+    profile_config = dict(config)
+    profile_config["simple_net_backward_thread"] = [
+        sys.executable,
+        "./sample/simple_net.py",
+        "--backward-thread",
+    ]
+    try:
+        returncode = binary_handler_profile_rocprof_compute(
+            profile_config,
+            workload_dir,
+            [
+                "--experimental",
+                "--torch-trace",
+                "--iteration-multiplexing",
+            ],
+            check_success=True,
+            app_name="simple_net_backward_thread",
+        )
+        assert returncode == 0
+        marker_files = list(Path(workload_dir).glob("**/*marker_api_trace.csv.gz"))
+        assert marker_files
+        functions = []
+        thread_ids = set()
+        for marker_file in marker_files:
+            with csv_compression.open_gzip_csv_read(marker_file) as f:
+                for row in csv.DictReader(f):
+                    functions.append(row["Function"])
+                    thread_ids.add(row["Thread_Id"])
+        assert any("torch.Tensor.backward" in fn for fn in functions)
+        assert len(thread_ids) >= 2
+        assert any(re.search(r"ltid=\d+", fn) for fn in functions)
+    finally:
+        common.clean_output_dir(config["cleanup"], workload_dir)

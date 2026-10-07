@@ -6,6 +6,7 @@
 import gzip
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import common
 import pandas as pd
@@ -14,6 +15,7 @@ import pytest
 import utils.utils_analysis as utils_analysis
 from utils import csv_compression, schema
 from utils.ml_api_trace_errors import (
+    KernelSequenceLengthMismatchError,
     MissingSourceLocationError,
     OverlappingMarkerRangeError,
     PassMarkerMismatchError,
@@ -26,6 +28,8 @@ from utils.utils_analysis import (
     NodeRollup,
     attach_unlocated_trees_by_launcher_thread,
     build_operator_summary,
+    copy_matched_operator_subtree,
+    filter_forest_by_backends,
     fold_identical_sibling_subtrees,
     format_operator_args,
     nest_marker_intervals,
@@ -1014,6 +1018,62 @@ def test_fold_identical_sibling_subtrees_merges_nested_children():
     assert len(folded[0].children) == 1
     assert folded[0].children[0].call_count == 2
     assert folded[0].children[0].kernels["k"].launches == 2
+
+
+def test_filter_forest_by_backends_strips_scaffolding_kernels():
+    child = leaf_operator(
+        "triton.JITFunction.matmul_kernel",
+        "1",
+        40.0,
+        kernel="triton_matmul_kernel",
+        backend="triton",
+    )
+    parent = leaf_operator(
+        "nn.Module.Linear.forward",
+        "0",
+        10.0,
+        kernel="torch_gemm_kernel",
+        backend="torch",
+    )
+    parent.children = [child]
+    forest = {"1": [parent]}
+
+    filtered = filter_forest_by_backends(forest, ["triton"])
+    filtered_parent = filtered["1"][0]
+    assert filtered_parent.kernels == {}
+    assert "triton_matmul_kernel" in filtered_parent.children[0].kernels
+    assert "torch_gemm_kernel" in forest["1"][0].kernels
+    assert "triton_matmul_kernel" in forest["1"][0].children[0].kernels
+
+
+def test_copy_matched_operator_subtree_keeps_ancestors_and_descendants():
+    node_c = leaf_operator("C", "2", 30.0, kernel="c_kernel")
+    node_b = leaf_operator("B", "1", 20.0, kernel="b_kernel")
+    node_d = leaf_operator("D", "3", 40.0, kernel="d_kernel")
+    node_a = leaf_operator("A", "0", 10.0, kernel="a_kernel")
+    node_b.children = [node_c]
+    node_a.children = [node_b, node_d]
+    forest = {"1": [node_a]}
+
+    copied = copy_matched_operator_subtree(forest, [node_b])
+    copied_a = copied["1"][0]
+    assert copied_a.name == "A"
+    assert copied_a.kernels == {}
+    assert [child.name for child in copied_a.children] == ["B"]
+    assert [child.name for child in copied_a.children[0].children] == ["C"]
+
+
+def test_kernel_stats_length_mismatch_records_error():
+    row = SimpleNamespace(
+        Operator_Name="aten::addmm",
+        Kernel_Names=["gemm", "add"],
+        Kernel_Start_Timestamps=[0, 10],
+        Kernel_End_Timestamps=[5],
+    )
+    errors = []
+    kernels = utils_analysis._kernel_stats_from_marker_row(row, errors)
+    assert kernels == {}
+    assert any(isinstance(err, KernelSequenceLengthMismatchError) for err in errors)
 
 
 def test_split_operator_args_respects_nested_commas():
@@ -2868,6 +2928,23 @@ def test_nest_marker_intervals_three_deep_with_file_line():
     assert addmm.line_number is None
 
 
+def test_nest_marker_intervals_nests_when_child_row_precedes_parent():
+    forest = nest_marker_intervals(
+        pd.DataFrame([
+            parsed_marker_row("aten::addmm", 20, 70),
+            parsed_marker_row(
+                "nn.Module.Linear.forward",
+                10,
+                80,
+                file_name="simple_torch_code.py",
+                line_number=19,
+            ),
+        ])
+    )
+    assert forest["1"][0].name == "nn.Module.Linear.forward"
+    assert [child.name for child in forest["1"][0].children] == ["aten::addmm"]
+
+
 def test_nest_marker_intervals_disjoint_linear_siblings():
     forest = nest_marker_intervals(
         pd.DataFrame([
@@ -3204,6 +3281,26 @@ def test_process_two_passes_collapse_to_one_launch(tmp_path):
     process_ml_api_trace_output(workload, str(workload_dir))
     assert len(workload.ml_api_trace_df) == 1
     assert workload.ml_api_call_trees["1"][0].kernel_launches == 1
+
+
+def test_process_collapse_keeps_pass0_gpu_time(tmp_path):
+    workload_dir = tmp_path / "pass0_gpu_time"
+    write_ml_api_pass(
+        workload_dir,
+        0,
+        [linear_marker_row(11, 0, 100)],
+        [counter_row(11, "addmm_kernel", 10, 40, dispatch_id=1)],
+    )
+    write_ml_api_pass(
+        workload_dir,
+        1,
+        [linear_marker_row(22, 1000, 1100)],
+        [counter_row(22, "addmm_kernel", 1010, 1100, dispatch_id=9)],
+    )
+    workload = schema.Workload()
+    process_ml_api_trace_output(workload, str(workload_dir))
+    stats = workload.ml_api_call_trees["1"][0].kernels["addmm_kernel"]
+    assert stats.total_duration_ns == 30
 
 
 def test_marker_stitch_key_keeps_seqnr_tid_ftid_omits_ltid():
