@@ -1,0 +1,82 @@
+# Builds ROCr's libhsa-runtime64 from this branch for k3d-lab's ComfyUI Workload
+# (github.com/StefanBS/k3d-lab), against the ROCm 7.14.1 Python wheels that its
+# docker.io/rocm/pytorch image ships, and attaches it to a release for the tag.
+#
+# The branch is release/therock-7.14 at the commit that ROCm 7.14.1 was built from
+# (ca887ee80abf), plus upstream's fix for the AsyncEventsLoop event-age spin, cherry-picked
+# from develop (c06ea68a59..78b874d460). Only lab-rocr-runtime-* tags run this.
+name: Lab build of libhsa-runtime64
+
+on:
+  push:
+    tags: ["lab-rocr-runtime-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # The same Ubuntu, gcc and glibc as the rocm/pytorch image.
+    container: ubuntu:24.04
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates git cmake ninja-build g++ make pkg-config python3-venv binutils \
+            xxd patchelf
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: projects/rocr-runtime
+
+      # ROCm's headers, CMake packages, clang for the blit kernels, and the libelf, libdrm
+      # and libnuma that the image's ROCr links (as rocm_sysdeps), all from the same 7.14.1
+      # wheels as the image's runtime. The versions are pinned, so PyPI's placeholder
+      # packages never match.
+      - name: Install ROCm 7.14.1 development files
+        run: |
+          python3 -m venv /opt/rocm-venv
+          /opt/rocm-venv/bin/pip install --quiet \
+            --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/ \
+            rocm==7.14.1 rocm-sdk-core==7.14.1 rocm-sdk-devel==7.14.1
+          /opt/rocm-venv/bin/rocm-sdk init
+          root=$(/opt/rocm-venv/bin/rocm-sdk path --root)
+          echo "ROCM_ROOT=$root" >> "$GITHUB_ENV"
+          echo "SYSDEPS=$root/lib/rocm_sysdeps" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          PKG_CONFIG_PATH="$SYSDEPS/lib/pkgconfig" cmake -S projects/rocr-runtime -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="$ROCM_ROOT;$SYSDEPS" \
+            -DCMAKE_INCLUDE_PATH="$SYSDEPS/include" \
+            -DCMAKE_LIBRARY_PATH="$SYSDEPS/lib" \
+            -DBUILD_SHARED_LIBS=ON
+
+      - name: Build
+        run: cmake --build build --target hsa-runtime64 -j "$(nproc)"
+
+      # The image's copy finds its dependencies through this RPATH, relative to its own
+      # directory in the _rocm_sdk_core wheel; the build's own points into this runner.
+      - name: Package
+        run: |
+          mkdir dist
+          strip --strip-debug -o dist/libhsa-runtime64.so.1 build/rocr/lib/libhsa-runtime64.so.1
+          patchelf --force-rpath --set-rpath \
+            '$ORIGIN:$ORIGIN/rocm_sysdeps/lib:$ORIGIN/../../_rocm_sdk_core/lib/llvm/lib:$ORIGIN/../../_rocm_sdk_core/lib/rocm_sysdeps/lib' \
+            dist/libhsa-runtime64.so.1
+          readelf -d dist/libhsa-runtime64.so.1 | grep -E "SONAME|NEEDED|RPATH|RUNPATH"
+          cd dist && sha256sum libhsa-runtime64.so.1 | tee libhsa-runtime64.so.1.sha256
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/libhsa-runtime64.so.1
+            dist/libhsa-runtime64.so.1.sha256
+          body: >-
+            libhsa-runtime64.so.1 (ROCr 1.21) for ROCm 7.14.1, built from ${{ github.sha }}:
+            release/therock-7.14 at ca887ee80abf plus upstream's AsyncEventsLoop event-age
+            fix from develop (c06ea68a59, 933596e921, 48b08ae3ca, 78b874d460). Debug info
+            stripped. For k3d-lab's ComfyUI only; it matches no other ROCm version.
