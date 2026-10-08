@@ -1,0 +1,81 @@
+# Builds rocprofiler-sdk's shared library from this branch for k3d-lab's ComfyUI Workload
+# (github.com/StefanBS/k3d-lab), against the ROCm 7.14.1 Python wheels that its
+# docker.io/rocm/pytorch image ships, and attaches it to a release for the tag.
+#
+# The branch is release/therock-7.14 at the commit that ROCm 7.14.1 was built from
+# (ca887ee80abf), plus the signal pool fix. Only lab-rocprofiler-sdk-* tags run this.
+name: Lab build of librocprofiler-sdk
+
+on:
+  push:
+    tags: ["lab-rocprofiler-sdk-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # The same Ubuntu, gcc and glibc as the rocm/pytorch image.
+    container: ubuntu:24.04
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates git cmake ninja-build g++ make pkg-config python3-venv binutils \
+            libdw-dev libelf-dev libsqlite3-dev libdrm-dev
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: projects/rocprofiler-sdk
+
+      - name: Check out rocprofiler-sdk's submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          ext=projects/rocprofiler-sdk/external
+          git submodule update --init --depth 1 --jobs 8 \
+            $ext/abseil-cpp $ext/cereal $ext/elfio $ext/filesystem $ext/fmt $ext/gotcha \
+            $ext/json $ext/perfetto $ext/ptl $ext/pybind11 $ext/sqlite $ext/yaml-cpp $ext/googletest
+
+      # ROCm's headers and CMake packages come from the same 7.14.1 wheels as the image's
+      # runtime. The versions are pinned, so PyPI's placeholder packages never match.
+      - name: Install ROCm 7.14.1 development files
+        run: |
+          python3 -m venv /opt/rocm-venv
+          /opt/rocm-venv/bin/pip install --quiet \
+            --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/ \
+            rocm==7.14.1 rocm-sdk-core==7.14.1 rocm-sdk-devel==7.14.1
+          /opt/rocm-venv/bin/rocm-sdk init
+          echo "ROCM_ROOT=$(/opt/rocm-venv/bin/rocm-sdk path --root)" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          cmake -S projects/rocprofiler-sdk -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="$ROCM_ROOT" \
+            -DROCM_PATH="$ROCM_ROOT" \
+            -DROCPROFILER_BUILD_TESTS=OFF \
+            -DROCPROFILER_BUILD_SAMPLES=OFF \
+            -DROCPROFILER_BUILD_DOCS=OFF
+
+      - name: Build
+        run: cmake --build build --target rocprofiler-sdk-shared-library -j "$(nproc)"
+
+      - name: Package
+        run: |
+          mkdir dist
+          strip --strip-debug -o dist/librocprofiler-sdk.so.1 build/lib/librocprofiler-sdk.so.1
+          readelf -d dist/librocprofiler-sdk.so.1 | grep -E "SONAME|NEEDED"
+          cd dist && sha256sum librocprofiler-sdk.so.1 | tee librocprofiler-sdk.so.1.sha256
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/librocprofiler-sdk.so.1
+            dist/librocprofiler-sdk.so.1.sha256
+          body: >-
+            librocprofiler-sdk.so.1 (rocprofiler-sdk 1.3.2) for ROCm 7.14.1, built from
+            ${{ github.sha }}: release/therock-7.14 at ca887ee80abf plus the HSA signal pool
+            fix (batches of 1024 instead of 4096). Debug info stripped. For k3d-lab's
+            ComfyUI only; it matches no other ROCm version.
