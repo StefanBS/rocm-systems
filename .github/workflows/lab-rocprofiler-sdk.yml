@@ -45,7 +45,7 @@ jobs:
           python3 -m venv /opt/rocm-venv
           /opt/rocm-venv/bin/pip install --quiet \
             --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/ \
-            rocm==7.14.1 rocm-sdk-core==7.14.1 rocm-sdk-devel==7.14.1
+            rocm==7.14.1 rocm-sdk-core==7.14.1 rocm-sdk-libraries==7.14.1 rocm-sdk-devel==7.14.1
           /opt/rocm-venv/bin/rocm-sdk init
           echo "ROCM_ROOT=$(/opt/rocm-venv/bin/rocm-sdk path --root)" >> "$GITHUB_ENV"
 
